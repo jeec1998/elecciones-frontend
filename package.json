@@ -9,7 +9,9 @@
     "build": "tsc -b && vite build",
     "build:digitador": "tsc -b && vite build --mode digitador",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "cf:deploy": "npm run build && npx wrangler deploy",
+    "cf:deploy:digitador": "npm run build:digitador && npx wrangler deploy --env digitador"
   },
   "dependencies": {
     "@capacitor/android": "^6.1.2",

@@ -1,0 +1,89 @@
+name: CI/CD — Build & Deploy to Cloudflare
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: "Modo de despliegue a Cloudflare (full, digitador, o both)"
+        required: true
+        default: "full"
+        type: choice
+        options:
+          - full
+          - digitador
+          - both
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    name: Build, Lint & Deploy (Cloudflare)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js from .node-version
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".node-version"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint verification
+        run: npm run lint
+
+      - name: Check Cloudflare Secrets configuration
+        id: cf_secrets
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CF_TOKEN" ] && [ -n "$CF_ACCOUNT" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Cloudflare Secrets pendientes::No se detectaron CLOUDFLARE_API_TOKEN y/o CLOUDFLARE_ACCOUNT_ID en GitHub Secrets. La validación de código (lint + build) se ejecutará normalmente, pero el despliegue a Cloudflare se omitirá hasta que configures los secretos en Settings > Secrets and variables > Actions."
+          fi
+
+      - name: Build Full Mode Application
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full' || inputs.deploy_mode == 'both' }}
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL || vars.VITE_API_URL || 'http://localhost:8000/api' }}
+        run: npm run build
+
+      - name: Deploy Full Mode to Cloudflare
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cf_secrets.outputs.configured == 'true') || (github.event_name == 'workflow_dispatch' && (inputs.deploy_mode == 'full' || inputs.deploy_mode == 'both') && steps.cf_secrets.outputs.configured == 'true') }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+      - name: Build Digitador Mode Application
+        if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && vars.DEPLOY_DIGITADOR == 'true') || (github.event_name == 'workflow_dispatch' && (inputs.deploy_mode == 'digitador' || inputs.deploy_mode == 'both')) }}
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL || vars.VITE_API_URL || 'http://localhost:8000/api' }}
+        run: npm run build:digitador
+
+      - name: Deploy Digitador Mode to Cloudflare
+        if: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_DIGITADOR == 'true') || (github.event_name == 'workflow_dispatch' && (inputs.deploy_mode == 'digitador' || inputs.deploy_mode == 'both'))) && steps.cf_secrets.outputs.configured == 'true' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --env digitador

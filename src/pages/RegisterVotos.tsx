@@ -192,28 +192,6 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
   };
   fetchCandidates();
 }, [dignity, selectedCanton, selectedParroquia]);
-  /*useEffect(() => {
-    const fetchCandidates = async () => {
-      if (!dignity) return;
-      try {
-        const cands = await api.getCandidates(
-          dignity,
-          selectedCanton || undefined,
-          selectedParroquia || undefined
-        );
-        setCandidates(cands);
-        // Inicializar votos en cero
-        const initialVotes: Record<string, number> = {};
-        cands.forEach(c => {
-          initialVotes[c.id] = 0;
-        });
-        setVotes(initialVotes);
-      } catch (err) {
-        console.error("Error cargando candidatos:", err);
-      }
-    };
-    fetchCandidates();
-  }, [dignity, selectedCanton, selectedParroquia]);*/
 
   // Modificar votos individuales
   const handleVoteChange = (candidateId: string, val: string) => {
@@ -272,12 +250,18 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
   };
 
   const handleRemovePhoto = (index: number) => {
-    setPhotoPreviews(prev => prev.filter((_, i) => i !== index));
+    setPhotoPreviews(prev => {
+      if (prev[index]) URL.revokeObjectURL(prev[index]);
+      return prev.filter((_, i) => i !== index);
+    });
     setCompressedBlobs(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleRemovePersonalPhoto = (index: number) => {
-    setPersonalPhotoPreviews(prev => prev.filter((_, i) => i !== index));
+    setPersonalPhotoPreviews(prev => {
+      if (prev[index]) URL.revokeObjectURL(prev[index]);
+      return prev.filter((_, i) => i !== index);
+    });
     setPersonalCompressedBlobs(prev => prev.filter((_, i) => i !== index));
   };
 
@@ -378,6 +362,8 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
       setWhiteVotes(0);
       setNullVotes(0);
       setTotalVoters(0);
+      photoPreviews.forEach(url => URL.revokeObjectURL(url));
+      personalPhotoPreviews.forEach(url => URL.revokeObjectURL(url));
       setPhotoPreviews([]);
       setCompressedBlobs([]);
       setPersonalPhotoPreviews([]);

@@ -1,6 +1,32 @@
-export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api";
+function resolveApiBaseUrl(): string {
+  const raw = (
+    import.meta.env.BACKEND_URL ||
+    import.meta.env.VITE_API_URL ||
+    "https://controlelectoral2026.lat/api"
+  ).trim();
+
+  let normalized = raw.replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(normalized)) {
+    const isLocal = /^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(normalized);
+    normalized = `${isLocal ? "http" : "https"}://${normalized}`;
+  }
+  if (!/\/api$/i.test(normalized)) {
+    normalized = `${normalized}/api`;
+  }
+  return normalized;
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 // Origen del servidor sin "/api" (para armar URLs de fotos: /api/uploads/...)
 export const API_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, "");
+
+async function parseErrorDetail(response: Response, fallback: string): Promise<string> {
+  const err = await response.json().catch(() => null);
+  if (err && typeof err.detail === "string" && err.detail.trim()) {
+    return err.detail;
+  }
+  return fallback;
+}
 
 // Soporta tanto URLs absolutas (Cloudflare R2, data:, blob:) como rutas relativas (/api/uploads/...)
 export function resolvePhotoUrl(url: string): string {
@@ -291,8 +317,41 @@ export const api = {
       body: JSON.stringify({ username, password }),
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error de credenciales");
+      throw new Error(await parseErrorDetail(response, "Error de credenciales"));
+    }
+    return response.json();
+  },
+
+  async registerUser(data: {
+    username: string;
+    password: string;
+    full_name: string;
+    role: string;
+    assigned_recinto_id: string | null;
+    assigned_mesa: number | null;
+    assigned_gender: string | null;
+  }) {
+    if (isOffline()) {
+      initOfflineDB();
+      const users = getLocalUsers();
+      users.push({
+        username: data.username,
+        role: data.role,
+        full_name: data.full_name,
+        assigned_recinto_id: data.assigned_recinto_id || undefined,
+        is_active: true,
+      });
+      localStorage.setItem("electoral_offline_users", JSON.stringify(users));
+      return { username: data.username, role: data.role, full_name: data.full_name };
+    }
+
+    const response = await fetch(`${API_BASE_URL}/auth/register`, {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new Error(await parseErrorDetail(response, "Error al registrar el usuario"));
     }
     return response.json();
   },
@@ -323,6 +382,9 @@ export const api = {
     const response = await fetch(`${API_BASE_URL}/elections/geography`, {
       headers: getHeaders(),
     });
+    if (!response.ok) {
+      throw new Error(await parseErrorDetail(response, "Error al obtener la geografía electoral"));
+    }
     return response.json();
   },
 
@@ -344,6 +406,9 @@ export const api = {
     const response = await fetch(`${API_BASE_URL}/elections/recintos?${params}`, {
       headers: getHeaders(),
     });
+    if (!response.ok) {
+      throw new Error(await parseErrorDetail(response, "Error al obtener los recintos"));
+    }
     return response.json();
   },
 
@@ -356,11 +421,11 @@ export const api = {
       return rec;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/recintos/${recintoId}`, {
+    const response = await fetch(`${API_BASE_URL}/elections/recintos/${encodeURIComponent(recintoId)}`, {
       headers: getHeaders(),
     });
     if (!response.ok) {
-      throw new Error("No se pudo obtener la información del recinto");
+      throw new Error(await parseErrorDetail(response, "No se pudo obtener la información del recinto"));
     }
     return response.json();
   },
@@ -375,15 +440,18 @@ export const api = {
       return candidates;
     }
 
-  const params = new URLSearchParams();
-  if (dignity) params.append("dignity", dignity);
-  if (canton) params.append("canton", canton);
-  if (parroquia) params.append("parroquia", parroquia);
+    const params = new URLSearchParams();
+    if (dignity) params.append("dignity", dignity);
+    if (canton) params.append("canton", canton);
+    if (parroquia) params.append("parroquia", parroquia);
 
-  const response = await fetch(`${API_BASE_URL}/elections/candidates?${params}`, {
-    headers: getHeaders(),
-  });
-  return response.json();
+    const response = await fetch(`${API_BASE_URL}/elections/candidates?${params}`, {
+      headers: getHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(await parseErrorDetail(response, "Error al obtener los candidatos"));
+    }
+    return response.json();
   },
 
   async createRecinto(data: {
@@ -411,8 +479,7 @@ export const api = {
       body: JSON.stringify(data),
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error al crear el recinto");
+      throw new Error(await parseErrorDetail(response, "Error al crear el recinto"));
     }
     return response.json();
   },
@@ -442,8 +509,7 @@ export const api = {
       body: JSON.stringify(data),
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error al registrar el candidato");
+      throw new Error(await parseErrorDetail(response, "Error al registrar el candidato"));
     }
     return response.json();
   },
@@ -468,14 +534,13 @@ export const api = {
       return updated;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/recintos/${recintoId}`, {
+    const response = await fetch(`${API_BASE_URL}/elections/recintos/${encodeURIComponent(recintoId)}`, {
       method: "PUT",
       headers: getHeaders(),
       body: JSON.stringify(data),
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error al actualizar el recinto");
+      throw new Error(await parseErrorDetail(response, "Error al actualizar el recinto"));
     }
     return response.json();
   },
@@ -494,13 +559,12 @@ export const api = {
       return;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/recintos/${recintoId}`, {
+    const response = await fetch(`${API_BASE_URL}/elections/recintos/${encodeURIComponent(recintoId)}`, {
       method: "DELETE",
       headers: getHeaders(),
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error al eliminar el recinto");
+      throw new Error(await parseErrorDetail(response, "Error al eliminar el recinto"));
     }
   },
 
@@ -524,14 +588,13 @@ export const api = {
       return updated;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/candidates/${candidateId}`, {
+    const response = await fetch(`${API_BASE_URL}/elections/candidates/${encodeURIComponent(candidateId)}`, {
       method: "PUT",
       headers: getHeaders(),
       body: JSON.stringify(data),
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error al actualizar el candidato");
+      throw new Error(await parseErrorDetail(response, "Error al actualizar el candidato"));
     }
     return response.json();
   },
@@ -545,13 +608,12 @@ export const api = {
       return;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/candidates/${candidateId}`, {
+    const response = await fetch(`${API_BASE_URL}/elections/candidates/${encodeURIComponent(candidateId)}`, {
       method: "DELETE",
       headers: getHeaders(),
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error al eliminar el candidato");
+      throw new Error(await parseErrorDetail(response, "Error al eliminar el candidato"));
     }
   },
 
@@ -603,8 +665,7 @@ export const api = {
       body: JSON.stringify(data),
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error al registrar los votos");
+      throw new Error(await parseErrorDetail(response, "Error al registrar los votos"));
     }
     return response.json();
   },
@@ -630,7 +691,7 @@ export const api = {
     const formData = new FormData();
     formData.append("file", file, "acta_photo.jpg");
 
-    const response = await fetch(`${API_BASE_URL}/votes/actas/${actaId}/upload-photo`, {
+    const response = await fetch(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}/upload-photo`, {
       method: "POST",
       headers: {
         ...(token ? { "Authorization": `Bearer ${token}` } : {}),
@@ -638,8 +699,7 @@ export const api = {
       body: formData,
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error al subir la imagen del acta");
+      throw new Error(await parseErrorDetail(response, "Error al subir la imagen del acta"));
     }
     return response.json();
   },
@@ -665,7 +725,7 @@ export const api = {
     const formData = new FormData();
     formData.append("file", file, "acta_photo_personal.jpg");
 
-    const response = await fetch(`${API_BASE_URL}/votes/actas/${actaId}/upload-photo-personal`, {
+    const response = await fetch(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}/upload-photo-personal`, {
       method: "POST",
       headers: {
         ...(token ? { "Authorization": `Bearer ${token}` } : {}),
@@ -673,8 +733,7 @@ export const api = {
       body: formData,
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error al subir la copia del acta personal");
+      throw new Error(await parseErrorDetail(response, "Error al subir la copia del acta personal"));
     }
     return response.json();
   },
@@ -697,6 +756,9 @@ export const api = {
     const response = await fetch(`${API_BASE_URL}/votes/actas?${params}`, {
       headers: getHeaders(),
     });
+    if (!response.ok) {
+      throw new Error(await parseErrorDetail(response, "Error al obtener las actas"));
+    }
     return response.json();
   },
 
@@ -709,11 +771,11 @@ export const api = {
       return act;
     }
 
-    const response = await fetch(`${API_BASE_URL}/votes/actas/${actaId}`, {
+    const response = await fetch(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}`, {
       headers: getHeaders(),
     });
     if (!response.ok) {
-      throw new Error("No se pudo obtener la información del acta");
+      throw new Error(await parseErrorDetail(response, "No se pudo obtener la información del acta"));
     }
     return response.json();
   },
@@ -734,14 +796,13 @@ export const api = {
       return actas[idx];
     }
 
-    const response = await fetch(`${API_BASE_URL}/votes/actas/${actaId}/verify`, {
+    const response = await fetch(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}/verify`, {
       method: "POST",
       headers: getHeaders(),
       body: JSON.stringify({ status, novedad_comment: comment }),
     });
     if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || "Error al verificar el acta");
+      throw new Error(await parseErrorDetail(response, "Error al verificar el acta"));
     }
     return response.json();
   },
@@ -976,6 +1037,9 @@ export const api = {
     const response = await fetch(`${API_BASE_URL}/reports/geographical-breakdown?${params}`, {
       headers: getHeaders(),
     });
+    if (!response.ok) {
+      throw new Error(await parseErrorDetail(response, "Error al obtener el desglose geográfico"));
+    }
     return response.json();
   }
 };

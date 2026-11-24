@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { api, API_BASE_URL, type Recinto, type Candidate } from "../services/api";
+import { api, type Recinto, type Candidate } from "../services/api";
 
 interface AdministracionProps {
   user: {
@@ -91,28 +91,15 @@ export const Administracion: React.FC<AdministracionProps> = ({ user, onNavigate
 
     setFormLoading(true);
     try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${API_BASE_URL}/auth/register`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          username: userUsername,
-          password: userPassword,
-          full_name: userFullName,
-          role: userRole,
-          assigned_recinto_id: userRecintoId || null,
-          assigned_mesa: userMesa ? Number(userMesa) : null,
-          assigned_gender: userGender || null
-        })
+      await api.registerUser({
+        username: userUsername,
+        password: userPassword,
+        full_name: userFullName,
+        role: userRole,
+        assigned_recinto_id: userRecintoId || null,
+        assigned_mesa: userMesa ? Number(userMesa) : null,
+        assigned_gender: userGender || null
       });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || "Error al registrar el usuario");
-      }
 
       setStatusMessage({ type: "success", text: `Usuario ${userUsername} registrado exitosamente.` });
       setUserUsername("");

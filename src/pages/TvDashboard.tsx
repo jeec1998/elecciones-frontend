@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { api, type Recinto } from "../services/api";
+import { api, resolvePhotoUrl, type Recinto } from "../services/api";
 
 interface TvDashboardProps {
   onExit: () => void;
@@ -321,7 +321,7 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
         {hasVotes ? (
           <div className="leader-box">
             {leader.photo_url
-              ? <img src={leader.photo_url} alt={leader.name} className="avatar" />
+              ? <img src={resolvePhotoUrl(leader.photo_url)} alt={leader.name} className="avatar" />
               : <div className="avatar avatar-empty">👤</div>}
             <div style={{ flex: 1, minWidth: 0 }}>
               <span style={{ fontSize: "0.65rem", color: "#fbbf24", fontWeight: 800 }}>LÍDER ACTUAL</span>

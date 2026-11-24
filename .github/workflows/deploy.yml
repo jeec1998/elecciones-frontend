@@ -63,7 +63,8 @@ jobs:
       - name: Build Full Mode Application
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'full' || inputs.deploy_mode == 'both' }}
         env:
-          VITE_API_URL: ${{ secrets.VITE_API_URL || vars.VITE_API_URL || 'http://localhost:8000/api' }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL || vars.VITE_API_URL || secrets.BACKEND_URL || vars.BACKEND_URL || 'https://controlelectoral2026.lat/api' }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL || vars.BACKEND_URL || secrets.VITE_API_URL || vars.VITE_API_URL || 'controlelectoral2026.lat' }}
         run: npm run build
 
       - name: Deploy Full Mode to Cloudflare
@@ -77,7 +78,8 @@ jobs:
       - name: Build Digitador Mode Application
         if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && vars.DEPLOY_DIGITADOR == 'true') || (github.event_name == 'workflow_dispatch' && (inputs.deploy_mode == 'digitador' || inputs.deploy_mode == 'both')) }}
         env:
-          VITE_API_URL: ${{ secrets.VITE_API_URL || vars.VITE_API_URL || 'http://localhost:8000/api' }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL || vars.VITE_API_URL || secrets.BACKEND_URL || vars.BACKEND_URL || 'https://controlelectoral2026.lat/api' }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL || vars.BACKEND_URL || secrets.VITE_API_URL || vars.VITE_API_URL || 'controlelectoral2026.lat' }}
         run: npm run build:digitador
 
       - name: Deploy Digitador Mode to Cloudflare

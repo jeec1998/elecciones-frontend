@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { api, API_ORIGIN, type Acta, type Candidate, type Recinto } from "../services/api";
+import { api, resolvePhotoUrl, type Acta, type Candidate, type Recinto } from "../services/api";
 
 interface VerificacionProps {
   user: {
@@ -350,7 +350,7 @@ export const Verificacion: React.FC<VerificacionProps> = ({ user, onNavigateToDa
                 >
                   {currentPhoto ? (
                     <img
-                      src={`${API_ORIGIN}${currentPhoto}`}
+                      src={resolvePhotoUrl(currentPhoto)}
                       alt={`Acta ${activePhotoType === "publica" ? "Pública" : "Personal"} - Página ${photoIndex + 1}`}
                       style={{
                         maxWidth: "100%",

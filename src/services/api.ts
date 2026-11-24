@@ -2,6 +2,15 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:80
 // Origen del servidor sin "/api" (para armar URLs de fotos: /api/uploads/...)
 export const API_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, "");
 
+// Soporta tanto URLs absolutas (Cloudflare R2, data:, blob:) como rutas relativas (/api/uploads/...)
+export function resolvePhotoUrl(url: string): string {
+  if (!url) return "";
+  if (/^(https?:\/\/|data:|blob:)/i.test(url)) {
+    return url;
+  }
+  return `${API_ORIGIN}${url}`;
+}
+
 function getHeaders() {
   const token = localStorage.getItem("token");
   return {

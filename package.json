@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "cf:deploy": "npm run build && npx wrangler deploy",
-    "cf:deploy:digitador": "npm run build:digitador && npx wrangler deploy --env digitador"
+    "cf:deploy:digitador": "npm run build:digitador && npx wrangler deploy --name elecciones-frontend-digitador"
   },
   "dependencies": {
     "@capacitor/android": "^6.1.2",

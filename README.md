@@ -57,8 +57,8 @@ El proyecto soporta dos modos de empaquetado controlado por `VITE_APP_MODE`:
 ## Despliegue Automatizado en Cloudflare (GitHub Actions CI/CD)
 
 El repositorio incluye configuración lista para desplegar en **Cloudflare** mediante:
-- `wrangler.jsonc`: Configuración de Cloudflare Workers Static Assets con soporte SPA (`not_found_handling: "single-page-application"`) y entorno `digitador`.
-- `public/_redirects` y `public/_headers`: Reglas de enrutamiento SPA (`/* /index.html 200`), cabeceras de seguridad (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy: camera=(self)`) y caché inmutable para `/assets/*`.
+- `wrangler.jsonc`: Configuración de Cloudflare Workers Static Assets con soporte nativo para enrutamiento SPA (`not_found_handling: "single-page-application"`).
+- `public/_headers`: Cabeceras HTTP de seguridad (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy: camera=(self)`) y caché inmutable para `/assets/*`.
 - `.github/workflows/deploy.yml`: Pipeline de integración y despliegue continuo en GitHub Actions.
 
 ### 1. Obtener Credenciales de Cloudflare
@@ -151,4 +151,4 @@ Dado que Vite compila las variables `import.meta.env.VITE_*` de forma estática 
 | `npm run lint` | Ejecuta análisis estático con ESLint 10 |
 | `npm run preview` | Sirve localmente la carpeta `dist/` compilada |
 | `npm run cf:deploy` | Compila en modo `full` y despliega a Cloudflare con Wrangler |
-| `npm run cf:deploy:digitador` | Compila en modo `digitador` y despliega al entorno `digitador` en Cloudflare |
+| `npm run cf:deploy:digitador` | Compila en modo `digitador` y despliega como `elecciones-frontend-digitador` en Cloudflare |

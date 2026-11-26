@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { api } from "../services/api";
 
 interface DashboardProps {
@@ -129,46 +129,49 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onNavigate
     }
   };
 
-  // Cargar datos del dashboard
-  const fetchDashboardData = async () => {
+  // Cargar datos del dashboard (en paralelo y compatible con backend nuevo o anterior)
+  const fetchDashboardData = useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Obtener consolidado
-      const dash = await api.getDashboard(
-        dignity,
-        selectedProvincia || undefined,
-        selectedCanton || undefined,
-        selectedParroquia || undefined
-      );
+      const [dash, bd] = await Promise.all([
+        api.getDashboard(
+          dignity,
+          selectedProvincia || undefined,
+          selectedCanton || undefined,
+          selectedParroquia || undefined
+        ),
+        selectedCanton
+          ? api.getGeographicalBreakdown(dignity, selectedCanton)
+          : Promise.resolve([]),
+      ]);
+
       setSummary(dash.summary);
       setCandidateResults(dash.candidate_results);
+      setGeoBreakdown(bd);
 
-      // 2. Obtener desglose parroquial (si hay cantón seleccionado)
-      if (selectedCanton) {
-        const bd = await api.getGeographicalBreakdown(dignity, selectedCanton);
-        setGeoBreakdown(bd);
+      if (typeof dash.summary?.novelty_actas_count === "number") {
+        setNoveltyActasCount(dash.summary.novelty_actas_count);
       } else {
-        setGeoBreakdown([]);
+        const noveltyActas = await api.getActas("Con Novedad", undefined, dignity);
+        setNoveltyActasCount(Array.isArray(noveltyActas) ? noveltyActas.length : 0);
       }
-
-      // 3. Obtener conteo de actas con novedad
-      const noveltyActas = await api.getActas("Con Novedad", undefined, dignity);
-      setNoveltyActasCount(noveltyActas.length);
-
     } catch (err) {
       console.error("Error cargando consolidados:", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [dignity, selectedProvincia, selectedCanton, selectedParroquia]);
 
-  // Escuchar cambios en filtros de consulta
+  // Escuchar cambios en filtros de consulta y pausar polling cuando la pestaña está en segundo plano
   useEffect(() => {
     fetchDashboardData();
-    // Establecer un intervalo de refresco automático cada 30 segundos para simular tiempo real
-    const interval = setInterval(fetchDashboardData, 30000);
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        fetchDashboardData();
+      }
+    }, 30000);
     return () => clearInterval(interval);
-  }, [dignity, selectedProvincia, selectedCanton, selectedParroquia]);
+  }, [fetchDashboardData]);
 
   return (
     <div className="dashboard-body animate-fade-in">

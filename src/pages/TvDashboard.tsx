@@ -47,6 +47,27 @@ const pick = (obj: any, keys: string[]) => {
   return 0;
 };
 
+const Donut: React.FC<{ items: { key: string; pct: number }[]; center: React.ReactNode }> = ({ items, center }) => {
+  return (
+    <div style={{ position: "relative", width: 170, height: 170, margin: "0 auto 1.25rem" }}>
+      <svg width="100%" height="100%" viewBox="0 0 42 42">
+        <circle cx="21" cy="21" r="15.9155" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="5" />
+        {items.map((it, idx) => {
+          if (it.pct <= 0) return null;
+          const accBefore = items.slice(0, idx).reduce((sum, prev) => sum + (prev.pct > 0 ? prev.pct : 0), 0);
+          const offset = 100 - accBefore + 25;
+          return (
+            <circle key={it.key} cx="21" cy="21" r="15.9155" fill="none"
+              stroke={COLORS[idx % COLORS.length]} strokeWidth="5"
+              strokeDasharray={`${it.pct} ${100 - it.pct}`} strokeDashoffset={offset} />
+          );
+        })}
+      </svg>
+      <div className="donut-center">{center}</div>
+    </div>
+  );
+};
+
 export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
   const [recintosMap, setRecintosMap] = useState<Record<string, Recinto>>({});
 
@@ -161,7 +182,11 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
   useEffect(() => {
     setSelectedCandidateId(null);
     fetchDetailedData();
-    const t = setInterval(fetchDetailedData, 30000); // refresco cada 30 s
+    const t = setInterval(() => {
+      if (!document.hidden) {
+        fetchDetailedData();
+      }
+    }, 30000); // refresco cada 30 s cuando la pantalla está visible
     return () => clearInterval(t);
   }, [fetchDetailedData]);
 
@@ -274,28 +299,6 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
   };
 
   // ---------- Componentes de render ----------
-  const Donut: React.FC<{ items: { key: string; pct: number }[]; center: React.ReactNode }> = ({ items, center }) => {
-    let acc = 0;
-    return (
-      <div style={{ position: "relative", width: 170, height: 170, margin: "0 auto 1.25rem" }}>
-        <svg width="100%" height="100%" viewBox="0 0 42 42">
-          <circle cx="21" cy="21" r="15.9155" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="5" />
-          {items.map((it, idx) => {
-            if (it.pct <= 0) return null;
-            const offset = 100 - acc + 25;
-            acc += it.pct;
-            return (
-              <circle key={it.key} cx="21" cy="21" r="15.9155" fill="none"
-                stroke={COLORS[idx % COLORS.length]} strokeWidth="5"
-                strokeDasharray={`${it.pct} ${100 - it.pct}`} strokeDashoffset={offset} />
-            );
-          })}
-        </svg>
-        <div className="donut-center">{center}</div>
-      </div>
-    );
-  };
-
   const renderGeneralCard = (key: string, title: string, onClick: () => void, big = false) => {
     const data = generalStats[key];
     if (!data) {

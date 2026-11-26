@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { api, type Candidate, type Recinto } from "../services/api";
 
 // Compara textos sin importar mayúsculas ni tildes ("Riobamba" == "RIOBAMBA", "Alausí" == "ALAUSI")
@@ -53,6 +53,13 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const isSubmittingRef = useRef(false);
+  const pendingUploadRef = useRef<{
+    key: string;
+    actaId: string;
+    publicUploaded: number;
+    personalUploaded: number;
+  } | null>(null);
 
   // Cargar geografía al inicio
   useEffect(() => {
@@ -151,47 +158,47 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
 
   // Cargar candidatos cuando cambia la geografía o la dignidad
   useEffect(() => {
-  const fetchCandidates = async () => {
-    if (!dignity) return;
-    try {
-      // Prefectos: solo provincia (sin cantón ni parroquia)
-      // Alcalde, concejales: solo cantón
-      // Vocal junta parroquial: cantón y parroquia
-      const canton =
-        dignity === "prefecto" ? undefined : selectedCanton || undefined;
-      const parroquia =
-        dignity === "junta_parroquial" ? selectedParroquia || undefined : undefined;
+    const fetchCandidates = async () => {
+      if (!dignity) return;
+      try {
+        // Prefectos: solo provincia (sin cantón ni parroquia)
+        // Alcalde, concejales: solo cantón
+        // Vocal junta parroquial: cantón y parroquia
+        const canton =
+          dignity === "prefecto" ? undefined : selectedCanton || undefined;
+        const parroquia =
+          dignity === "junta_parroquial" ? selectedParroquia || undefined : undefined;
 
-      // Si se necesita cantón y aún no está cargado, esperar
-      if (dignity !== "prefecto" && !canton) {
-        setCandidates([]);
-        return;
+        // Si se necesita cantón y aún no está cargado, esperar
+        if (dignity !== "prefecto" && !canton) {
+          setCandidates([]);
+          return;
+        }
+
+        let cands = await api.getCandidates(dignity, canton, parroquia);
+
+        // Respaldo: si no llegó nada (p. ej. candidato guardado como "Riobamba" y recinto como "RIOBAMBA"),
+        // traer todos los de la dignidad y filtrar aquí sin importar mayúsculas ni tildes.
+        if (cands.length === 0 && (canton || parroquia)) {
+          const todos = await api.getCandidates(dignity, undefined, undefined);
+          cands = todos.filter((c: any) =>
+            (!canton || norm(c.canton) === norm(canton)) &&
+            (!parroquia || norm(c.parroquia) === norm(parroquia))
+          );
+        }
+        setCandidates(cands);
+
+        const initialVotes: Record<string, number> = {};
+        cands.forEach(c => {
+          initialVotes[c.id] = 0;
+        });
+        setVotes(initialVotes);
+      } catch (err) {
+        console.error("Error cargando candidatos:", err);
       }
-
-      let cands = await api.getCandidates(dignity, canton, parroquia);
-
-      // Respaldo: si no llegó nada (p. ej. candidato guardado como "Riobamba" y recinto como "RIOBAMBA"),
-      // traer todos los de la dignidad y filtrar aquí sin importar mayúsculas ni tildes.
-      if (cands.length === 0 && (canton || parroquia)) {
-        const todos = await api.getCandidates(dignity, undefined, undefined);
-        cands = todos.filter((c: any) =>
-          (!canton || norm(c.canton) === norm(canton)) &&
-          (!parroquia || norm(c.parroquia) === norm(parroquia))
-        );
-      }
-      setCandidates(cands);
-
-      const initialVotes: Record<string, number> = {};
-      cands.forEach(c => {
-        initialVotes[c.id] = 0;
-      });
-      setVotes(initialVotes);
-    } catch (err) {
-      console.error("Error cargando candidatos:", err);
-    }
-  };
-  fetchCandidates();
-}, [dignity, selectedCanton, selectedParroquia]);
+    };
+    fetchCandidates();
+  }, [dignity, selectedCanton, selectedParroquia]);
 
   // Modificar votos individuales
   const handleVoteChange = (candidateId: string, val: string) => {
@@ -310,6 +317,7 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
   // Guardar acta en el servidor
   const handleSaveActa = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current || loading) return;
     setMessage(null);
 
     // Validaciones
@@ -326,30 +334,56 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
       }
     }
 
+    isSubmittingRef.current = true;
     setLoading(true);
+    const attemptKey = `${selectedRecintoId}:${mesaNumber}:${gender}:${dignity}:${compressedBlobs.length}:${personalCompressedBlobs.length}`;
+
     try {
-      // 1. Crear el acta con los votos
-      const registeredActa = await api.createActa({
-        recinto_id: selectedRecintoId,
-        mesa_number: Number(mesaNumber),
-        gender,
-        dignity,
-        votes,
-        white_votes: whiteVotes,
-        null_votes: nullVotes,
-        total_voters: totalVoters
-      });
+      let actaId =
+        pendingUploadRef.current && pendingUploadRef.current.key === attemptKey
+          ? pendingUploadRef.current.actaId
+          : "";
 
-      // 2. Subir todas las fotos del acta oficial pública secuencialmente
-      for (const blob of compressedBlobs) {
-        await api.uploadActaPhoto(registeredActa.id, blob);
+      // 1. Crear o actualizar el acta con los votos (idempotente ante reintentos de red móvil)
+      if (!actaId) {
+        const registeredActa = await api.createActa({
+          recinto_id: selectedRecintoId,
+          mesa_number: Number(mesaNumber),
+          gender,
+          dignity,
+          votes,
+          white_votes: whiteVotes,
+          null_votes: nullVotes,
+          total_voters: totalVoters
+        });
+        actaId = registeredActa.id;
+        pendingUploadRef.current = {
+          key: attemptKey,
+          actaId,
+          publicUploaded: 0,
+          personalUploaded: 0,
+        };
       }
 
-      // 3. Subir todas las fotos de la copia del acta personal secuencialmente
-      for (const blob of personalCompressedBlobs) {
-        await api.uploadActaPhotoPersonal(registeredActa.id, blob);
+      // 2. Subir las fotos del acta oficial pública pendientes secuencialmente
+      const startPublic = pendingUploadRef.current?.publicUploaded ?? 0;
+      for (let i = startPublic; i < compressedBlobs.length; i++) {
+        await api.uploadActaPhoto(actaId, compressedBlobs[i]);
+        if (pendingUploadRef.current) {
+          pendingUploadRef.current.publicUploaded = i + 1;
+        }
       }
 
+      // 3. Subir las fotos de la copia del acta personal pendientes secuencialmente
+      const startPersonal = pendingUploadRef.current?.personalUploaded ?? 0;
+      for (let i = startPersonal; i < personalCompressedBlobs.length; i++) {
+        await api.uploadActaPhotoPersonal(actaId, personalCompressedBlobs[i]);
+        if (pendingUploadRef.current) {
+          pendingUploadRef.current.personalUploaded = i + 1;
+        }
+      }
+
+      pendingUploadRef.current = null;
       setMessage({ type: "success", text: "Acta registrada y subidas todas las imágenes con éxito." });
 
       // Limpiar formulario excepto ubicación para agilizar la siguiente mesa
@@ -369,8 +403,12 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
       setPersonalPhotoPreviews([]);
       setPersonalCompressedBlobs([]);
     } catch (err: any) {
-      setMessage({ type: "error", text: err.message || "Error al registrar el acta" });
+      setMessage({
+        type: "error",
+        text: err.message || "Error al registrar el acta. Puede presionar Enviar nuevamente para reintentar."
+      });
     } finally {
+      isSubmittingRef.current = false;
       setLoading(false);
     }
   };
@@ -529,10 +567,10 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
                 </select>
               </div>
             ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginTop: "1rem" }}>
-              <div className="input-group">
-                <label className="input-label">Mesa / JRV</label>
-                <input
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginTop: "1rem" }}>
+                <div className="input-group">
+                  <label className="input-label">Mesa / JRV</label>
+                  <input
                     className="input-field"
                     type="number"
                     min="0"
@@ -540,22 +578,22 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
                     placeholder="Ej. 1"
                     value={mesaNumber}
                     onChange={(e) => setMesaNumber(e.target.value === "" ? "" : Number(e.target.value))}
-                />
-              </div>
+                  />
+                </div>
 
-              <div className="input-group">
-                <label className="input-label">Género</label>
-                <select
-                  className="input-field"
-                  value={gender}
-                  onChange={(e) => setGender(e.target.value)}
-                >
-                  <option value="Femenina">Femenina</option>
-                  <option value="Masculina">Masculina</option>
-                  <option value="Mixta">Mixta</option>
-                </select>
+                <div className="input-group">
+                  <label className="input-label">Género</label>
+                  <select
+                    className="input-field"
+                    value={gender}
+                    onChange={(e) => setGender(e.target.value)}
+                  >
+                    <option value="Femenina">Femenina</option>
+                    <option value="Masculina">Masculina</option>
+                    <option value="Mixta">Mixta</option>
+                  </select>
+                </div>
               </div>
-            </div>
             )}
 
             <div className="input-group" style={{ marginTop: "0.5rem" }}>

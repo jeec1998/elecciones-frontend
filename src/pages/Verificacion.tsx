@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { api, resolvePhotoUrl, type Acta, type Candidate, type Recinto } from "../services/api";
 
 interface VerificacionProps {
@@ -37,35 +37,48 @@ export const Verificacion: React.FC<VerificacionProps> = ({ user, onNavigateToDa
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Cargar actas
-  const loadActas = async () => {
+  // Cargar catálogos (candidatos y recintos) una sola vez al montar el componente en paralelo
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const [allCandidates, allRecintos] = await Promise.all([
+          api.getCandidates(),
+          api.getRecintos(),
+        ]);
+        if (!active) return;
+        const candMap: Record<string, Candidate> = {};
+        allCandidates.forEach(c => { candMap[c.id] = c; });
+        setCandidates(candMap);
+
+        const recMap: Record<string, Recinto> = {};
+        allRecintos.forEach(r => { recMap[r.id] = r; });
+        setRecintos(recMap);
+      } catch (err) {
+        console.error("Error al cargar catálogos de auditoría:", err);
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  // Cargar actas según el filtro activo
+  const loadActas = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const list = await api.getActas(filterStatus || undefined);
       setActas(list);
-
-      // Cargar candidatos y recintos faltantes para resolver nombres
-      const allCandidates = await api.getCandidates();
-      const candMap: Record<string, Candidate> = {};
-      allCandidates.forEach(c => { candMap[c.id] = c; });
-      setCandidates(candMap);
-
-      const allRecintos = await api.getRecintos();
-      const recMap: Record<string, Recinto> = {};
-      allRecintos.forEach(r => { recMap[r.id] = r; });
-      setRecintos(recMap);
     } catch (err: any) {
       setError(err.message || "Error al cargar las actas para auditoría");
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterStatus]);
 
   useEffect(() => {
     loadActas();
     setSelectedActa(null);
-  }, [filterStatus]);
+  }, [loadActas]);
 
   // Selección de acta para auditar
   const handleSelectActa = async (acta: Acta) => {

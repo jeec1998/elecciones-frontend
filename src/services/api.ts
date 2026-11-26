@@ -28,6 +28,67 @@ async function parseErrorDetail(response: Response, fallback: string): Promise<s
   return fallback;
 }
 
+const DEFAULT_TIMEOUT_MS = 25000;
+
+async function fetchWithTimeout(
+  input: string,
+  init?: RequestInit,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      throw new Error(
+        "Tiempo de espera agotado al conectar con el servidor. Verifique su conexión e intente nuevamente.",
+        { cause: err }
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Caché en memoria de cliente (TTL 120s + deduplicación Single-Flight) para catálogos electorales
+const CATALOG_CACHE_TTL_MS = 120_000;
+const _catalogCache = new Map<string, { expiresAt: number; data: any }>();
+const _catalogInFlight = new Map<string, Promise<any>>();
+
+function getCachedCatalog<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  const now = Date.now();
+  const hit = _catalogCache.get(key);
+  if (hit && hit.expiresAt > now) {
+    return Promise.resolve(hit.data as T);
+  }
+  const existingPromise = _catalogInFlight.get(key);
+  if (existingPromise) {
+    return existingPromise as Promise<T>;
+  }
+  const promise = fetcher()
+    .then((data) => {
+      if (_catalogCache.size >= 256) {
+        _catalogCache.clear();
+      }
+      _catalogCache.set(key, { expiresAt: Date.now() + CATALOG_CACHE_TTL_MS, data });
+      _catalogInFlight.delete(key);
+      return data;
+    })
+    .catch((err) => {
+      _catalogInFlight.delete(key);
+      throw err;
+    });
+  _catalogInFlight.set(key, promise);
+  return promise;
+}
+
+export function clearCatalogCache(): void {
+  _catalogCache.clear();
+  _catalogInFlight.clear();
+}
+
 // Soporta tanto URLs absolutas (Cloudflare R2, data:, blob:) como rutas relativas (/api/uploads/...)
 export function resolvePhotoUrl(url: string): string {
   if (!url) return "";
@@ -311,7 +372,7 @@ export const api = {
       };
     }
 
-    const response = await fetch(`${API_BASE_URL}/auth/login-json`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/auth/login-json`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
@@ -345,7 +406,7 @@ export const api = {
       return { username: data.username, role: data.role, full_name: data.full_name };
     }
 
-    const response = await fetch(`${API_BASE_URL}/auth/register`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/auth/register`, {
       method: "POST",
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -379,13 +440,15 @@ export const api = {
       }));
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/geography`, {
-      headers: getHeaders(),
+    return getCachedCatalog("geography", async () => {
+      const response = await fetchWithTimeout(`${API_BASE_URL}/elections/geography`, {
+        headers: getHeaders(),
+      });
+      if (!response.ok) {
+        throw new Error(await parseErrorDetail(response, "Error al obtener la geografía electoral"));
+      }
+      return response.json();
     });
-    if (!response.ok) {
-      throw new Error(await parseErrorDetail(response, "Error al obtener la geografía electoral"));
-    }
-    return response.json();
   },
 
   async getRecintos(provincia?: string, canton?: string, parroquia?: string): Promise<Recinto[]> {
@@ -402,14 +465,17 @@ export const api = {
     if (provincia) params.append("provincia", provincia);
     if (canton) params.append("canton", canton);
     if (parroquia) params.append("parroquia", parroquia);
+    const cacheKey = `recintos:${params.toString()}`;
 
-    const response = await fetch(`${API_BASE_URL}/elections/recintos?${params}`, {
-      headers: getHeaders(),
+    return getCachedCatalog(cacheKey, async () => {
+      const response = await fetchWithTimeout(`${API_BASE_URL}/elections/recintos?${params}`, {
+        headers: getHeaders(),
+      });
+      if (!response.ok) {
+        throw new Error(await parseErrorDetail(response, "Error al obtener los recintos"));
+      }
+      return response.json();
     });
-    if (!response.ok) {
-      throw new Error(await parseErrorDetail(response, "Error al obtener los recintos"));
-    }
-    return response.json();
   },
 
   async getRecinto(recintoId: string): Promise<Recinto> {
@@ -421,13 +487,15 @@ export const api = {
       return rec;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/recintos/${encodeURIComponent(recintoId)}`, {
-      headers: getHeaders(),
+    return getCachedCatalog(`recinto:${recintoId}`, async () => {
+      const response = await fetchWithTimeout(`${API_BASE_URL}/elections/recintos/${encodeURIComponent(recintoId)}`, {
+        headers: getHeaders(),
+      });
+      if (!response.ok) {
+        throw new Error(await parseErrorDetail(response, "No se pudo obtener la información del recinto"));
+      }
+      return response.json();
     });
-    if (!response.ok) {
-      throw new Error(await parseErrorDetail(response, "No se pudo obtener la información del recinto"));
-    }
-    return response.json();
   },
 
   async getCandidates(dignity?: string, canton?: string, parroquia?: string): Promise<Candidate[]> {
@@ -444,14 +512,17 @@ export const api = {
     if (dignity) params.append("dignity", dignity);
     if (canton) params.append("canton", canton);
     if (parroquia) params.append("parroquia", parroquia);
+    const cacheKey = `candidates:${params.toString()}`;
 
-    const response = await fetch(`${API_BASE_URL}/elections/candidates?${params}`, {
-      headers: getHeaders(),
+    return getCachedCatalog(cacheKey, async () => {
+      const response = await fetchWithTimeout(`${API_BASE_URL}/elections/candidates?${params}`, {
+        headers: getHeaders(),
+      });
+      if (!response.ok) {
+        throw new Error(await parseErrorDetail(response, "Error al obtener los candidatos"));
+      }
+      return response.json();
     });
-    if (!response.ok) {
-      throw new Error(await parseErrorDetail(response, "Error al obtener los candidatos"));
-    }
-    return response.json();
   },
 
   async createRecinto(data: {
@@ -473,7 +544,7 @@ export const api = {
       return newRecinto;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/recintos`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/elections/recintos`, {
       method: "POST",
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -481,6 +552,7 @@ export const api = {
     if (!response.ok) {
       throw new Error(await parseErrorDetail(response, "Error al crear el recinto"));
     }
+    clearCatalogCache();
     return response.json();
   },
 
@@ -503,7 +575,7 @@ export const api = {
       return newCandidate;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/candidates`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/elections/candidates`, {
       method: "POST",
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -511,6 +583,7 @@ export const api = {
     if (!response.ok) {
       throw new Error(await parseErrorDetail(response, "Error al registrar el candidato"));
     }
+    clearCatalogCache();
     return response.json();
   },
 
@@ -534,7 +607,7 @@ export const api = {
       return updated;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/recintos/${encodeURIComponent(recintoId)}`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/elections/recintos/${encodeURIComponent(recintoId)}`, {
       method: "PUT",
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -542,6 +615,7 @@ export const api = {
     if (!response.ok) {
       throw new Error(await parseErrorDetail(response, "Error al actualizar el recinto"));
     }
+    clearCatalogCache();
     return response.json();
   },
 
@@ -559,13 +633,14 @@ export const api = {
       return;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/recintos/${encodeURIComponent(recintoId)}`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/elections/recintos/${encodeURIComponent(recintoId)}`, {
       method: "DELETE",
       headers: getHeaders(),
     });
     if (!response.ok) {
       throw new Error(await parseErrorDetail(response, "Error al eliminar el recinto"));
     }
+    clearCatalogCache();
   },
 
   async updateCandidate(candidateId: string, data: {
@@ -588,7 +663,7 @@ export const api = {
       return updated;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/candidates/${encodeURIComponent(candidateId)}`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/elections/candidates/${encodeURIComponent(candidateId)}`, {
       method: "PUT",
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -596,6 +671,7 @@ export const api = {
     if (!response.ok) {
       throw new Error(await parseErrorDetail(response, "Error al actualizar el candidato"));
     }
+    clearCatalogCache();
     return response.json();
   },
 
@@ -608,13 +684,14 @@ export const api = {
       return;
     }
 
-    const response = await fetch(`${API_BASE_URL}/elections/candidates/${encodeURIComponent(candidateId)}`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/elections/candidates/${encodeURIComponent(candidateId)}`, {
       method: "DELETE",
       headers: getHeaders(),
     });
     if (!response.ok) {
       throw new Error(await parseErrorDetail(response, "Error al eliminar el candidato"));
     }
+    clearCatalogCache();
   },
 
   // Votes Entry
@@ -659,7 +736,7 @@ export const api = {
       return newActa;
     }
 
-    const response = await fetch(`${API_BASE_URL}/votes/actas`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/votes/actas`, {
       method: "POST",
       headers: getHeaders(),
       body: JSON.stringify(data),
@@ -691,13 +768,13 @@ export const api = {
     const formData = new FormData();
     formData.append("file", file, "acta_photo.jpg");
 
-    const response = await fetch(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}/upload-photo`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}/upload-photo`, {
       method: "POST",
       headers: {
         ...(token ? { "Authorization": `Bearer ${token}` } : {}),
       },
       body: formData,
-    });
+    }, 45000);
     if (!response.ok) {
       throw new Error(await parseErrorDetail(response, "Error al subir la imagen del acta"));
     }
@@ -725,13 +802,13 @@ export const api = {
     const formData = new FormData();
     formData.append("file", file, "acta_photo_personal.jpg");
 
-    const response = await fetch(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}/upload-photo-personal`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}/upload-photo-personal`, {
       method: "POST",
       headers: {
         ...(token ? { "Authorization": `Bearer ${token}` } : {}),
       },
       body: formData,
-    });
+    }, 45000);
     if (!response.ok) {
       throw new Error(await parseErrorDetail(response, "Error al subir la copia del acta personal"));
     }
@@ -753,7 +830,7 @@ export const api = {
     if (recintoId) params.append("recinto_id", recintoId);
     if (dignity) params.append("dignity", dignity);
 
-    const response = await fetch(`${API_BASE_URL}/votes/actas?${params}`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/votes/actas?${params}`, {
       headers: getHeaders(),
     });
     if (!response.ok) {
@@ -771,7 +848,7 @@ export const api = {
       return act;
     }
 
-    const response = await fetch(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}`, {
       headers: getHeaders(),
     });
     if (!response.ok) {
@@ -796,7 +873,7 @@ export const api = {
       return actas[idx];
     }
 
-    const response = await fetch(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}/verify`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/votes/actas/${encodeURIComponent(actaId)}/verify`, {
       method: "POST",
       headers: getHeaders(),
       body: JSON.stringify({ status, novedad_comment: comment }),
@@ -836,7 +913,8 @@ export const api = {
             total_valid_votes: 0,
             total_white_votes: 0,
             total_null_votes: 0,
-            total_votes_emitidos: 0
+            total_votes_emitidos: 0,
+            novelty_actas_count: 0
           },
           candidate_results: []
         };
@@ -848,14 +926,14 @@ export const api = {
       let mesas_escrutadas = 0;
       let total_white = 0;
       let total_null = 0;
-      let total_voters = 0;
+      let novelty_actas_count = 0;
       const votes_by_candidate: Record<string, number> = {};
 
       for (const a of filteredActas) {
         mesas_escrutadas++;
+        if (a.status === "Con Novedad") novelty_actas_count++;
         total_white += a.white_votes || 0;
         total_null += a.null_votes || 0;
-        total_voters += a.total_voters || 0;
 
         for (const [cid, count] of Object.entries(a.votes || {})) {
           votes_by_candidate[cid] = (votes_by_candidate[cid] || 0) + count;
@@ -914,7 +992,8 @@ export const api = {
           total_valid_votes: total_valid_votes,
           total_white_votes: total_white,
           total_null_votes: total_null,
-          total_votes_emitidos: total_votes_emitidos
+          total_votes_emitidos: total_votes_emitidos,
+          novelty_actas_count
         },
         candidate_results
       };
@@ -925,11 +1004,11 @@ export const api = {
     if (canton) params.append("canton", canton);
     if (parroquia) params.append("parroquia", parroquia);
 
-    const response = await fetch(`${API_BASE_URL}/reports/dashboard?${params}`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/reports/dashboard?${params}`, {
       headers: getHeaders(),
     });
     if (!response.ok) {
-      throw new Error("Error al obtener los datos consolidados");
+      throw new Error(await parseErrorDetail(response, "Error al obtener los datos consolidados"));
     }
     return response.json();
   },
@@ -1034,7 +1113,7 @@ export const api = {
     const params = new URLSearchParams({ dignity });
     if (canton) params.append("canton", canton);
 
-    const response = await fetch(`${API_BASE_URL}/reports/geographical-breakdown?${params}`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/reports/geographical-breakdown?${params}`, {
       headers: getHeaders(),
     });
     if (!response.ok) {

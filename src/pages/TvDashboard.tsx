@@ -83,6 +83,7 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
   const [summary, setSummary] = useState<any>(EMPTY_SUMMARY);
   const [apiCandidates, setApiCandidates] = useState<any[]>([]);
   const [actas, setActas] = useState<any[]>([]);
+  const [serverZones, setServerZones] = useState<any[] | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
   // Datos Dashboard General
@@ -129,27 +130,19 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
     }
   }, [dignity.scope, canton, cantones]);
 
-  // ---------- Dashboard General: Prefectura + Alcaldía de cada cantón ----------
+  // ---------- Dashboard General: Prefectura + Alcaldía de cada cantón (1 sola petición) ----------
   const fetchGeneralDashboard = useCallback(async () => {
     if (cantones.length === 0) return;
     setGeneralLoading(true);
-    const views = [
-      { key: "prefecto", dignity: "prefecto", canton: undefined as string | undefined },
-      ...cantones.map(c => ({ key: `alcalde_${c}`, dignity: "alcalde", canton: c })),
-    ];
-    const results: Record<string, any> = {};
-    await Promise.all(
-      views.map(async v => {
-        try {
-          results[v.key] = await api.getDashboard(v.dignity, PROVINCIA, v.canton);
-        } catch (err) {
-          console.error(`Error cargando ${v.key}:`, err);
-        }
-      })
-    );
-    setGeneralStats(results);
-    setGeneralLoading(false);
-    setLastUpdate(new Date());
+    try {
+      const results = await api.getTvGeneral(PROVINCIA, cantones);
+      setGeneralStats(results);
+      setLastUpdate(new Date());
+    } catch (err) {
+      console.error("Error cargando resumen general TV:", err);
+    } finally {
+      setGeneralLoading(false);
+    }
   }, [cantones]);
 
   // ---------- Vista detallada ----------
@@ -163,13 +156,21 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
     setLoading(true);
     setError(null);
     try {
-      const [data, actasList] = await Promise.all([
-        api.getDashboard(dignity.id, PROVINCIA, canton || undefined),
-        api.getActas(undefined, undefined, dignity.id),
-      ]);
-      setSummary(data.summary || EMPTY_SUMMARY);
-      setApiCandidates(data.candidate_results || []);
-      setActas(actasList || []);
+      const detail = await api.getTvDetail(
+        dignity.id,
+        PROVINCIA,
+        canton || undefined,
+        parroquia || undefined
+      );
+      setSummary(detail.summary || EMPTY_SUMMARY);
+      setApiCandidates(detail.candidate_results || []);
+      if (Array.isArray(detail.zones)) {
+        setServerZones(detail.zones);
+        setActas([]);
+      } else {
+        setServerZones(null);
+        setActas(detail.actas || []);
+      }
       setLastUpdate(new Date());
     } catch (err) {
       console.error("Error cargando datos de TV:", err);
@@ -177,16 +178,18 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
     } finally {
       setLoading(false);
     }
-  }, [dignity.id, dignity.scope, canton, fetchGeneralDashboard]);
+  }, [dignity.id, dignity.scope, canton, parroquia, fetchGeneralDashboard]);
 
   useEffect(() => {
     setSelectedCandidateId(null);
     fetchDetailedData();
+    // Refresco cada 15 s + jitter aleatorio (0-5 s) para escalar a 300 espectadores sin picos simultáneos
+    const intervalMs = 15000 + Math.floor(Math.random() * 5000);
     const t = setInterval(() => {
       if (!document.hidden) {
         fetchDetailedData();
       }
-    }, 30000); // refresco cada 30 s cuando la pantalla está visible
+    }, intervalMs);
     return () => clearInterval(t);
   }, [fetchDetailedData]);
 
@@ -201,9 +204,9 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
     });
   }, [actas, recintosMap, canton, parroquia]);
 
-  // Si hay parroquia seleccionada, se recalculan los resultados desde las actas
+  // Si hay parroquia seleccionada y estamos usando fallback sin serverZones, recalculamos desde actas
   const { candidateResults, viewSummary } = useMemo(() => {
-    if (!parroquia) return { candidateResults: apiCandidates, viewSummary: summary };
+    if (serverZones !== null || !parroquia) return { candidateResults: apiCandidates, viewSummary: summary };
 
     const totals: Record<string, number> = {};
     let white = 0, nulls = 0;
@@ -239,7 +242,7 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
         total_votes_emitidos: valid + white + nulls,
       },
     };
-  }, [parroquia, apiCandidates, summary, filteredActas, recintosMap, canton]);
+  }, [serverZones, parroquia, apiCandidates, summary, filteredActas, recintosMap, canton]);
 
   // Nivel de desglose: Provincia→Cantón, Cantón→Parroquia, Parroquia→Recinto
   const breakdownLevel = !canton ? "Cantón" : !parroquia ? "Parroquia" : "Recinto";
@@ -248,6 +251,13 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
 
   // Desglose general (votos válidos y actas por zona + líder de cada zona)
   const zoneBreakdown = useMemo(() => {
+    if (serverZones !== null) {
+      return serverZones.map((z: any) => {
+        const leaderId = Object.entries(z.by_cand || {}).sort((a: any, b: any) => b[1] - a[1])[0]?.[0];
+        const leader = apiCandidates.find(c => c.id === leaderId);
+        return { location: z.location, votes: z.votes, actas: z.actas, leader };
+      });
+    }
     const zones: Record<string, { votes: number; actas: number; byCand: Record<string, number> }> = {};
     filteredActas.forEach(a => {
       const r: any = recintosMap[a.recinto_id];
@@ -268,11 +278,29 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
       })
       .sort((a, b) => b.votes - a.votes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredActas, recintosMap, apiCandidates, canton, parroquia]);
+  }, [serverZones, filteredActas, recintosMap, apiCandidates, canton, parroquia]);
 
   // Desglose del candidato seleccionado
   const candidateBreakdown = useMemo(() => {
     if (!selectedCandidateId) return { list: [] as any[], totalVotes: 0 };
+    if (serverZones !== null) {
+      const list = serverZones
+        .map((z: any) => ({
+          location: z.location,
+          votes: Number(z.by_cand?.[selectedCandidateId]) || 0,
+        }))
+        .filter((z: any) => z.votes > 0);
+      const totalVotes = list.reduce((s: number, z: any) => s + z.votes, 0);
+      return {
+        list: list
+          .map((z: any) => ({
+            ...z,
+            percentage: totalVotes ? round2((z.votes / totalVotes) * 100) : 0,
+          }))
+          .sort((a: any, b: any) => b.votes - a.votes),
+        totalVotes,
+      };
+    }
     const map: Record<string, number> = {};
     filteredActas.forEach(a => {
       const v = Number(a.votes?.[selectedCandidateId]) || 0;
@@ -287,7 +315,7 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
       .sort((a, b) => b.votes - a.votes);
     return { list, totalVotes };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCandidateId, filteredActas, recintosMap, canton, parroquia]);
+  }, [selectedCandidateId, serverZones, filteredActas, recintosMap, canton, parroquia]);
 
   // ---------- Navegación ----------
   const goTo = (id: string, c?: string) => {
@@ -627,7 +655,7 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
         <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
           {lastUpdate && (
             <span style={{ fontSize: "0.7rem", color: "#64748b", textAlign: "center" }}>
-              Últ. actualización {lastUpdate.toLocaleTimeString()} · auto 30 s
+              Últ. actualización {lastUpdate.toLocaleTimeString()} · auto 15 s
             </span>
           )}
           <button onClick={fetchDetailedData} className="btn btn-secondary" style={{ width: "100%", padding: "0.7rem", fontWeight: 700 }}>

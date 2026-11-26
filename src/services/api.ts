@@ -1120,5 +1120,75 @@ export const api = {
       throw new Error(await parseErrorDetail(response, "Error al obtener el desglose geográfico"));
     }
     return response.json();
+  },
+
+  async getTvGeneral(provincia: string, cantones: string[]) {
+    if (isOffline()) {
+      const results: Record<string, any> = {
+        prefecto: await this.getDashboard("prefecto", provincia),
+      };
+      await Promise.all(
+        cantones.map(async (c) => {
+          results[`alcalde_${c}`] = await this.getDashboard("alcalde", provincia, c);
+        })
+      );
+      return results;
+    }
+
+    const params = new URLSearchParams({ provincia });
+    if (cantones.length > 0) params.append("cantones", cantones.join(","));
+
+    const response = await fetchWithTimeout(`${API_BASE_URL}/reports/tv-general?${params}`, {
+      headers: getHeaders(),
+    });
+    if (response.status === 404) {
+      // Fallback retrocompatible si el backend aún no tiene /tv-general
+      const results: Record<string, any> = {};
+      const views = [
+        { key: "prefecto", dignity: "prefecto", canton: undefined as string | undefined },
+        ...cantones.map((c) => ({ key: `alcalde_${c}`, dignity: "alcalde", canton: c })),
+      ];
+      await Promise.all(
+        views.map(async (v) => {
+          results[v.key] = await this.getDashboard(v.dignity, provincia, v.canton);
+        })
+      );
+      return results;
+    }
+    if (!response.ok) {
+      throw new Error(await parseErrorDetail(response, "Error al obtener resumen general TV"));
+    }
+    return response.json();
+  },
+
+  async getTvDetail(dignity: string, provincia?: string, canton?: string, parroquia?: string) {
+    if (isOffline()) {
+      const [dash, actas] = await Promise.all([
+        this.getDashboard(dignity, provincia, canton, parroquia),
+        this.getActas(undefined, undefined, dignity),
+      ]);
+      return { ...dash, actas, zones: null };
+    }
+
+    const params = new URLSearchParams({ dignity });
+    if (provincia) params.append("provincia", provincia);
+    if (canton) params.append("canton", canton);
+    if (parroquia) params.append("parroquia", parroquia);
+
+    const response = await fetchWithTimeout(`${API_BASE_URL}/reports/tv-detail?${params}`, {
+      headers: getHeaders(),
+    });
+    if (response.status === 404) {
+      // Fallback retrocompatible si el backend aún no tiene /tv-detail
+      const [dash, actas] = await Promise.all([
+        this.getDashboard(dignity, provincia, canton),
+        this.getActas(undefined, undefined, dignity),
+      ]);
+      return { ...dash, actas, zones: null };
+    }
+    if (!response.ok) {
+      throw new Error(await parseErrorDetail(response, "Error al obtener detalle TV"));
+    }
+    return response.json();
   }
 };

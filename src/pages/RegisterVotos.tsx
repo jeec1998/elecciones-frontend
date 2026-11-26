@@ -227,8 +227,12 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
     setCompressing(true);
     try {
       const compressed = await compressImageOnClient(file);
-      setPhotoPreviews(prev => [...prev, URL.createObjectURL(file)]);
-      setCompressedBlobs(prev => [...prev, compressed]);
+      pendingUploadRef.current = null;
+      setPhotoPreviews(prev => {
+        prev.forEach(url => URL.revokeObjectURL(url));
+        return [URL.createObjectURL(file)];
+      });
+      setCompressedBlobs([compressed]);
     } catch (err) {
       console.error("Error comprimiendo imagen pública:", err);
       setMessage({ type: "error", text: "No se pudo procesar la imagen" });
@@ -245,8 +249,12 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
     setPersonalCompressing(true);
     try {
       const compressed = await compressImageOnClient(file);
-      setPersonalPhotoPreviews(prev => [...prev, URL.createObjectURL(file)]);
-      setPersonalCompressedBlobs(prev => [...prev, compressed]);
+      pendingUploadRef.current = null;
+      setPersonalPhotoPreviews(prev => {
+        prev.forEach(url => URL.revokeObjectURL(url));
+        return [URL.createObjectURL(file)];
+      });
+      setPersonalCompressedBlobs([compressed]);
     } catch (err) {
       console.error("Error comprimiendo imagen personal:", err);
       setMessage({ type: "error", text: "No se pudo procesar la imagen de copia personal" });
@@ -257,6 +265,7 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
   };
 
   const handleRemovePhoto = (index: number) => {
+    pendingUploadRef.current = null;
     setPhotoPreviews(prev => {
       if (prev[index]) URL.revokeObjectURL(prev[index]);
       return prev.filter((_, i) => i !== index);
@@ -265,6 +274,7 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
   };
 
   const handleRemovePersonalPhoto = (index: number) => {
+    pendingUploadRef.current = null;
     setPersonalPhotoPreviews(prev => {
       if (prev[index]) URL.revokeObjectURL(prev[index]);
       return prev.filter((_, i) => i !== index);
@@ -567,7 +577,7 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
                 </select>
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginTop: "1rem" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: "0.75rem", marginTop: "1rem" }}>
                 <div className="input-group">
                   <label className="input-label">Mesa / JRV</label>
                   <input
@@ -675,28 +685,36 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
               3. Blancos, Nulos y Totales
             </h3>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-              <div className="input-group">
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: "0.75rem" }}>
+              <div className="input-group" style={{ marginBottom: 0 }}>
                 <label className="input-label">Votos Blancos</label>
                 <input
                   className="input-field"
                   type="number"
                   min="0"
+                  inputMode="numeric"
                   placeholder="0"
-                  value={whiteVotes}
-                  onChange={(e) => setWhiteVotes(Number(e.target.value) || 0)}
+                  value={whiteVotes === 0 ? "" : whiteVotes}
+                  onChange={(e) => {
+                    const clean = e.target.value.replace(/^0+(?=\d)/, "");
+                    setWhiteVotes(clean === "" ? 0 : Math.max(0, parseInt(clean, 10) || 0));
+                  }}
                 />
               </div>
 
-              <div className="input-group">
+              <div className="input-group" style={{ marginBottom: 0 }}>
                 <label className="input-label">Votos Nulos</label>
                 <input
                   className="input-field"
                   type="number"
                   min="0"
+                  inputMode="numeric"
                   placeholder="0"
-                  value={nullVotes}
-                  onChange={(e) => setNullVotes(Number(e.target.value) || 0)}
+                  value={nullVotes === 0 ? "" : nullVotes}
+                  onChange={(e) => {
+                    const clean = e.target.value.replace(/^0+(?=\d)/, "");
+                    setNullVotes(clean === "" ? 0 : Math.max(0, parseInt(clean, 10) || 0));
+                  }}
                 />
               </div>
             </div>
@@ -736,161 +754,189 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
             </div>
           </div>
 
-          {/* CAPTURA DE FOTOS OFICIALES PÚBLICAS */}
+          {/* CAPTURA DE FOTO OFICIAL PÚBLICA */}
           <div className="mobile-card">
             <h3 style={{ fontSize: "1rem", marginBottom: "1rem", color: "#1e3a8a", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.5rem" }}>
               4. Fotos del Acta Pública (Pared / CNE)
             </h3>
 
-            {/* Listado de miniaturas capturadas */}
-            {photoPreviews.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.5rem", marginBottom: "1rem" }}>
-                {photoPreviews.map((preview, idx) => (
-                  <div key={idx} style={{ position: "relative", border: "1px solid var(--neutral-200)", borderRadius: "8px", overflow: "hidden", height: "90px" }}>
-                    <img src={preview} alt={`Página ${idx + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    <button
-                      type="button"
-                      onClick={() => handleRemovePhoto(idx)}
-                      style={{
-                        position: "absolute",
-                        top: "2px",
-                        right: "2px",
-                        backgroundColor: "rgba(244, 63, 94, 0.9)",
-                        color: "white",
-                        border: "none",
-                        borderRadius: "50%",
-                        width: "20px",
-                        height: "20px",
-                        fontSize: "0.75rem",
-                        fontWeight: "bold",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center"
-                      }}
-                      title="Eliminar foto"
-                    >
-                      ×
-                    </button>
-                    <span style={{ position: "absolute", bottom: "2px", left: "2px", backgroundColor: "rgba(15,23,42,0.8)", color: "white", padding: "1px 4px", fontSize: "0.6rem", borderRadius: "3px" }}>
-                      Pág {idx + 1}
-                    </span>
-                  </div>
-                ))}
+            {photoPreviews.length > 0 ? (
+              <div
+                style={{
+                  position: "relative",
+                  border: "1px solid var(--neutral-200)",
+                  borderRadius: "10px",
+                  overflow: "hidden",
+                  backgroundColor: "#0f172a",
+                  maxHeight: "260px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center"
+                }}
+              >
+                <img
+                  src={photoPreviews[0]}
+                  alt="Acta Pública capturada"
+                  style={{ width: "100%", maxHeight: "260px", objectFit: "contain", display: "block" }}
+                />
+                <button
+                  type="button"
+                  onClick={() => handleRemovePhoto(0)}
+                  disabled={loading}
+                  style={{
+                    position: "absolute",
+                    top: "8px",
+                    right: "8px",
+                    backgroundColor: "rgba(244, 63, 94, 0.95)",
+                    color: "white",
+                    border: "2px solid white",
+                    borderRadius: "50%",
+                    width: "32px",
+                    height: "32px",
+                    fontSize: "1.1rem",
+                    fontWeight: "bold",
+                    lineHeight: 1,
+                    cursor: loading ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.35)"
+                  }}
+                  title="Quitar foto para tomar otra"
+                  aria-label="Quitar foto del acta pública"
+                >
+                  ×
+                </button>
+              </div>
+            ) : (
+              <div className="input-group" style={{ marginBottom: 0 }}>
+                <label
+                  className="btn btn-secondary flex-center"
+                  style={{
+                    flexDirection: "column",
+                    padding: "1.25rem",
+                    border: "2px dashed var(--neutral-300)",
+                    backgroundColor: "#f8fafc",
+                    height: "auto",
+                    gap: "0.5rem",
+                    cursor: compressing ? "wait" : "pointer"
+                  }}
+                >
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                    <circle cx="12" cy="13" r="4" />
+                  </svg>
+                  <span style={{ fontSize: "0.85rem", color: "#475569", fontWeight: "600" }}>
+                    📷 Tomar Foto del Acta Pública
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    style={{ display: "none" }}
+                    disabled={compressing || loading}
+                    onChange={handlePhotoChange}
+                  />
+                </label>
               </div>
             )}
 
-            <div className="input-group">
-              <label
-                className="btn btn-secondary flex-center"
-                style={{
-                  flexDirection: "column",
-                  padding: "1.25rem",
-                  border: "2px dashed var(--neutral-300)",
-                  backgroundColor: "#f8fafc",
-                  height: "auto",
-                  gap: "0.5rem"
-                }}
-              >
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2">
-                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                  <circle cx="12" cy="13" r="4" />
-                </svg>
-                <span style={{ fontSize: "0.85rem", color: "#475569", fontWeight: "600" }}>
-                  📷 {photoPreviews.length > 0 ? "Añadir Otra Página / Foto Pública" : "Tomar Foto del Acta Pública"}
-                </span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  style={{ display: "none" }}
-                  onChange={handlePhotoChange}
-                />
-              </label>
-            </div>
-
             {compressing && (
-              <p style={{ fontSize: "0.8rem", color: "var(--primary)", textAlign: "center" }}>
+              <p style={{ fontSize: "0.8rem", color: "var(--primary)", textAlign: "center", marginTop: "0.5rem" }}>
                 Procesando y comprimiendo imagen pública...
               </p>
             )}
           </div>
 
-          {/* CAPTURA DE FOTOS PERSONALES */}
+          {/* CAPTURA DE FOTO PERSONAL */}
           <div className="mobile-card">
             <h3 style={{ fontSize: "1rem", marginBottom: "1rem", color: "#1e3a8a", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.5rem" }}>
               5. Fotos del Acta Personal (Copia del Delegado)
             </h3>
 
-            {/* Listado de miniaturas de copias personales */}
-            {personalPhotoPreviews.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.5rem", marginBottom: "1rem" }}>
-                {personalPhotoPreviews.map((preview, idx) => (
-                  <div key={idx} style={{ position: "relative", border: "1px solid var(--neutral-200)", borderRadius: "8px", overflow: "hidden", height: "90px" }}>
-                    <img src={preview} alt={`Página Personal ${idx + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    <button
-                      type="button"
-                      onClick={() => handleRemovePersonalPhoto(idx)}
-                      style={{
-                        position: "absolute",
-                        top: "2px",
-                        right: "2px",
-                        backgroundColor: "rgba(244, 63, 94, 0.9)",
-                        color: "white",
-                        border: "none",
-                        borderRadius: "50%",
-                        width: "20px",
-                        height: "20px",
-                        fontSize: "0.75rem",
-                        fontWeight: "bold",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center"
-                      }}
-                      title="Eliminar foto"
-                    >
-                      ×
-                    </button>
-                    <span style={{ position: "absolute", bottom: "2px", left: "2px", backgroundColor: "rgba(15,23,42,0.8)", color: "white", padding: "1px 4px", fontSize: "0.6rem", borderRadius: "3px" }}>
-                      Pág {idx + 1}
-                    </span>
-                  </div>
-                ))}
+            {personalPhotoPreviews.length > 0 ? (
+              <div
+                style={{
+                  position: "relative",
+                  border: "1px solid var(--neutral-200)",
+                  borderRadius: "10px",
+                  overflow: "hidden",
+                  backgroundColor: "#0f172a",
+                  maxHeight: "260px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center"
+                }}
+              >
+                <img
+                  src={personalPhotoPreviews[0]}
+                  alt="Acta Personal capturada"
+                  style={{ width: "100%", maxHeight: "260px", objectFit: "contain", display: "block" }}
+                />
+                <button
+                  type="button"
+                  onClick={() => handleRemovePersonalPhoto(0)}
+                  disabled={loading}
+                  style={{
+                    position: "absolute",
+                    top: "8px",
+                    right: "8px",
+                    backgroundColor: "rgba(244, 63, 94, 0.95)",
+                    color: "white",
+                    border: "2px solid white",
+                    borderRadius: "50%",
+                    width: "32px",
+                    height: "32px",
+                    fontSize: "1.1rem",
+                    fontWeight: "bold",
+                    lineHeight: 1,
+                    cursor: loading ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.35)"
+                  }}
+                  title="Quitar foto para tomar otra"
+                  aria-label="Quitar foto del acta personal"
+                >
+                  ×
+                </button>
+              </div>
+            ) : (
+              <div className="input-group" style={{ marginBottom: 0 }}>
+                <label
+                  className="btn btn-secondary flex-center"
+                  style={{
+                    flexDirection: "column",
+                    padding: "1.25rem",
+                    border: "2px dashed var(--neutral-300)",
+                    backgroundColor: "#f8fafc",
+                    height: "auto",
+                    gap: "0.5rem",
+                    cursor: personalCompressing ? "wait" : "pointer"
+                  }}
+                >
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                    <circle cx="12" cy="13" r="4" />
+                  </svg>
+                  <span style={{ fontSize: "0.85rem", color: "#475569", fontWeight: "600" }}>
+                    📷 Tomar Foto del Acta Personal
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    style={{ display: "none" }}
+                    disabled={personalCompressing || loading}
+                    onChange={handlePersonalPhotoChange}
+                  />
+                </label>
               </div>
             )}
 
-            <div className="input-group">
-              <label
-                className="btn btn-secondary flex-center"
-                style={{
-                  flexDirection: "column",
-                  padding: "1.25rem",
-                  border: "2px dashed var(--neutral-300)",
-                  backgroundColor: "#f8fafc",
-                  height: "auto",
-                  gap: "0.5rem"
-                }}
-              >
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2">
-                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                  <circle cx="12" cy="13" r="4" />
-                </svg>
-                <span style={{ fontSize: "0.85rem", color: "#475569", fontWeight: "600" }}>
-                  📷 {personalPhotoPreviews.length > 0 ? "Añadir Otra Página / Foto Personal" : "Tomar Foto del Acta Personal"}
-                </span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  style={{ display: "none" }}
-                  onChange={handlePersonalPhotoChange}
-                />
-              </label>
-            </div>
-
             {personalCompressing && (
-              <p style={{ fontSize: "0.8rem", color: "var(--primary)", textAlign: "center" }}>
+              <p style={{ fontSize: "0.8rem", color: "var(--primary)", textAlign: "center", marginTop: "0.5rem" }}>
                 Procesando y comprimiendo imagen personal...
               </p>
             )}

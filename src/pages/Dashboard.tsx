@@ -31,6 +31,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onNavigate
   const [selectedProvincia, setSelectedProvincia] = useState("");
   const [selectedCanton, setSelectedCanton] = useState("");
   const [selectedParroquia, setSelectedParroquia] = useState("");
+  const [selectedCircunscripcion, setSelectedCircunscripcion] = useState<"" | "1" | "2">("");
 
   // Resultados consolidados
   const [summary, setSummary] = useState<any>({
@@ -61,7 +62,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onNavigate
     setPage(1);
     setPageCirc1(1);
     setPageCirc2(1);
-  }, [dignity, selectedProvincia, selectedCanton, selectedParroquia]);
+  }, [dignity, selectedProvincia, selectedCanton, selectedParroquia, selectedCircunscripcion]);
+
+  useEffect(() => {
+    setSelectedCircunscripcion("");
+  }, [dignity, selectedCanton]);
 
   const buildPageNumbers = (current: number, total: number): (number | "…")[] => {
     const nums: (number | "…")[] = [];
@@ -430,7 +435,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onNavigate
                 <select
                   className="input-field"
                   value={selectedParroquia}
-                  onChange={(e) => setSelectedParroquia(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedParroquia(e.target.value);
+                    setSelectedCircunscripcion("");
+                  }}
                   disabled={!selectedCanton}
                   style={{ backgroundColor: "#1e293b", color: "#fff", borderColor: "rgba(255,255,255,0.1)", padding: "0.4rem 0.8rem" }}
                 >
@@ -438,6 +446,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onNavigate
                   {parroquias.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
+
+              {dignity === "concejal_urbano" && isRiobamba(selectedCanton) && (
+                <div className="flex-center" style={{ gap: "0.5rem" }}>
+                  <span style={{ fontSize: "0.8rem", color: "var(--neutral-300)" }}>Circunscripción:</span>
+                  <select
+                    className="input-field"
+                    value={selectedCircunscripcion}
+                    onChange={(e) => {
+                      setSelectedCircunscripcion(e.target.value as "" | "1" | "2");
+                      setSelectedParroquia("");
+                    }}
+                    style={{ backgroundColor: "#1e293b", color: "#fff", borderColor: "rgba(255,255,255,0.1)", padding: "0.4rem 0.8rem" }}
+                  >
+                    <option value="">Ambas (1 y 2)</option>
+                    <option value="1">Circunscripción 1</option>
+                    <option value="2">Circunscripción 2</option>
+                  </select>
+                </div>
+              )}
 
               <button
                 onClick={fetchDashboardData}
@@ -767,7 +794,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onNavigate
               );
             };
 
-            const circsToShow: CircunscripcionNumber[] = selectedCirc ? [selectedCirc] : [1, 2];
+            const explicitCirc = selectedCircunscripcion
+              ? (Number(selectedCircunscripcion) as CircunscripcionNumber)
+              : null;
+            const effectiveCirc = selectedCirc ?? explicitCirc;
+            const circsToShow: CircunscripcionNumber[] = effectiveCirc ? [effectiveCirc] : [1, 2];
 
             return (
               <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "1.5rem", alignItems: "start" }}>

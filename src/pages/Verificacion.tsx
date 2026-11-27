@@ -197,21 +197,45 @@ export const Verificacion: React.FC<VerificacionProps> = ({ user, onNavigateToDa
             }}
             className="animate-fade-in"
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
-              <h3 style={{ fontSize: "1.2rem", fontWeight: "700" }}>Actas Recibidas</h3>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.75rem", marginBottom: "1.5rem" }}>
+              <h3 style={{ fontSize: "1.2rem", fontWeight: "700", margin: 0 }}>
+                Actas Recibidas ({actas.length})
+              </h3>
 
               {/* Filtro de Estados */}
-              <select
-                className="input-field"
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                style={{ backgroundColor: "#1e293b", color: "#fff", borderColor: "rgba(255,255,255,0.1)", padding: "0.3rem 0.6rem", fontSize: "0.8rem" }}
-              >
-                <option value="En Verificación">Pendientes ({actas.filter(a => a.status === "En Verificación").length})</option>
-                <option value="Con Novedad">Con Novedad ({actas.filter(a => a.status === "Con Novedad").length})</option>
-                <option value="Validada">Validadas ({actas.filter(a => a.status === "Validada").length})</option>
-                <option value="">Todas ({actas.length})</option>
-              </select>
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+                {[
+                  { value: "En Verificación", label: "Pendientes" },
+                  { value: "Con Novedad", label: "Solo con Novedad" },
+                  { value: "Validada", label: "Validadas" },
+                  { value: "", label: "Todas" },
+                ].map((opt) => {
+                  const active = filterStatus === opt.value;
+                  const isNov = opt.value === "Con Novedad";
+                  const activeBorder = isNov ? "1px solid rgba(244, 63, 94, 0.7)" : "1px solid var(--primary)";
+                  const activeBg = isNov ? "rgba(244, 63, 94, 0.22)" : "rgba(59, 130, 246, 0.2)";
+                  const activeColor = isNov ? "#fda4af" : "#93c5fd";
+                  return (
+                    <button
+                      key={opt.label}
+                      type="button"
+                      onClick={() => setFilterStatus(opt.value)}
+                      style={{
+                        padding: "0.4rem 0.85rem",
+                        borderRadius: "9999px",
+                        fontSize: "0.8rem",
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        border: active ? activeBorder : "1px solid rgba(255,255,255,0.12)",
+                        backgroundColor: active ? activeBg : "rgba(30, 41, 59, 0.7)",
+                        color: active ? activeColor : "var(--neutral-300)",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {loading ? (
@@ -226,7 +250,12 @@ export const Verificacion: React.FC<VerificacionProps> = ({ user, onNavigateToDa
               </p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                {actas.map(acta => (
+                {actas.map(acta => {
+                  const hasNovedad =
+                    acta.status === "Con Novedad" ||
+                    Boolean(acta.novedad_comment?.trim()) ||
+                    getActaSum(acta) !== acta.total_voters;
+                  return (
                   <div
                     key={acta.id}
                     className="glass-card"
@@ -235,21 +264,38 @@ export const Verificacion: React.FC<VerificacionProps> = ({ user, onNavigateToDa
                       cursor: "pointer",
                       padding: "1rem",
                       borderLeft: `4px solid ${
-                        acta.status === "En Verificación" ? "var(--warning)" :
-                        acta.status === "Con Novedad" ? "var(--danger)" : "var(--success)"
+                        hasNovedad ? "var(--danger)" :
+                        acta.status === "En Verificación" ? "var(--warning)" : "var(--success)"
                       }`
                     }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.5rem", marginBottom: "0.5rem" }}>
                       <span style={{ fontWeight: "700", fontSize: "0.95rem" }}>
                         Mesa {acta.mesa_number} ({acta.gender})
                       </span>
-                      <span className={`badge ${
-                        acta.status === "En Verificación" ? "badge-warning" :
-                        acta.status === "Con Novedad" ? "badge-danger" : "badge-success"
-                      }`} style={{ fontSize: "0.6rem" }}>
-                        {acta.status}
-                      </span>
+                      <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        {hasNovedad && (
+                          <span
+                            className="badge badge-danger"
+                            style={{
+                              fontSize: "0.65rem",
+                              fontWeight: "800",
+                              backgroundColor: "rgba(244, 63, 94, 0.22)",
+                              color: "#fda4af",
+                              border: "1px solid rgba(244, 63, 94, 0.5)",
+                            }}
+                          >
+                            ACTA CON NOVEDAD
+                          </span>
+                        )}
+                        {acta.status !== "Con Novedad" && (
+                          <span className={`badge ${
+                            acta.status === "En Verificación" ? "badge-warning" : "badge-success"
+                          }`} style={{ fontSize: "0.6rem" }}>
+                            {acta.status}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div style={{ fontSize: "0.8rem", color: "var(--neutral-300)" }}>
                       <strong>Dignidad:</strong> {acta.dignity.toUpperCase()}
@@ -260,7 +306,8 @@ export const Verificacion: React.FC<VerificacionProps> = ({ user, onNavigateToDa
                       Ingresado por: {acta.entered_by}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -461,9 +508,25 @@ export const Verificacion: React.FC<VerificacionProps> = ({ user, onNavigateToDa
                     ← Volver a la Lista
                   </button>
 
-                  <h2 style={{ fontSize: "1.35rem", fontWeight: "800", color: "#fff", marginBottom: "0.25rem" }}>
-                    Mesa #{selectedActa.mesa_number} ({selectedActa.gender})
-                  </h2>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.25rem" }}>
+                    <h2 style={{ fontSize: "1.35rem", fontWeight: "800", color: "#fff", margin: 0 }}>
+                      Mesa #{selectedActa.mesa_number} ({selectedActa.gender})
+                    </h2>
+                    {(selectedActa.status === "Con Novedad" || Boolean(selectedActa.novedad_comment?.trim()) || getActaSum(selectedActa) !== selectedActa.total_voters) && (
+                      <span
+                        className="badge badge-danger"
+                        style={{
+                          fontSize: "0.7rem",
+                          fontWeight: "800",
+                          backgroundColor: "rgba(244, 63, 94, 0.22)",
+                          color: "#fda4af",
+                          border: "1px solid rgba(244, 63, 94, 0.5)",
+                        }}
+                      >
+                        ACTA CON NOVEDAD
+                      </span>
+                    )}
+                  </div>
                   <p style={{ fontSize: "0.8rem", color: "var(--neutral-300)" }}>
                     {getRecintoGeo(selectedActa.recinto_id)}
                   </p>
@@ -552,7 +615,7 @@ export const Verificacion: React.FC<VerificacionProps> = ({ user, onNavigateToDa
                 {/* ACCIONES DE VERIFICACIÓN */}
                 <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
                   <div className="input-group">
-                    <label className="input-label" style={{ color: "var(--neutral-300)" }}>Comentario Auditor (Requerido para Novedades)</label>
+                    <label className="input-label" style={{ color: "var(--neutral-300)" }}>Comentario con Novedad (Requerido para Novedades)</label>
                     <textarea
                       className="input-field"
                       placeholder="Ej. La lista 5 tiene 45 votos en la foto pero se ingresaron 54. O: El acta cuadra con la foto."

@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { api } from "../services/api";
+import {
+  CIRCUNSCRIPCION_INFO,
+  getCandidateCircunscripcion,
+  getRecintoCircunscripcion,
+  isRiobamba,
+  type CircunscripcionNumber,
+} from "../utils/circunscripcion";
 
 interface DashboardProps {
   user: {
@@ -46,25 +53,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onNavigate
   // Paginación de resultados de candidatos
   const PAGE_SIZE = 10;
   const [page, setPage] = useState(1);
+  const [pageCirc1, setPageCirc1] = useState(1);
+  const [pageCirc2, setPageCirc2] = useState(1);
 
   // Volver a la página 1 al cambiar de dignidad o de filtros
   useEffect(() => {
     setPage(1);
+    setPageCirc1(1);
+    setPageCirc2(1);
   }, [dignity, selectedProvincia, selectedCanton, selectedParroquia]);
 
-  const totalPages = Math.max(1, Math.ceil(candidateResults.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const pageStart = (currentPage - 1) * PAGE_SIZE;
-  const pagedCandidates = candidateResults.slice(pageStart, pageStart + PAGE_SIZE);
-  // Máximo de votos de TODOS los candidatos, para que las barras sean comparables entre páginas
-  const maxVotesAll = Math.max(0, ...candidateResults.map((c: any) => c.votes || 0)) || 1;
-
-  // Números de página con "…" cuando hay muchas: 1 … 4 5 6 … 20
-  const pageNumbers: (number | "…")[] = [];
-  for (let p = 1; p <= totalPages; p++) {
-    if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1) pageNumbers.push(p);
-    else if (pageNumbers[pageNumbers.length - 1] !== "…") pageNumbers.push("…");
-  }
+  const buildPageNumbers = (current: number, total: number): (number | "…")[] => {
+    const nums: (number | "…")[] = [];
+    for (let p = 1; p <= total; p++) {
+      if (p === 1 || p === total || Math.abs(p - current) <= 1) nums.push(p);
+      else if (nums[nums.length - 1] !== "…") nums.push("…");
+    }
+    return nums;
+  };
 
   const pageBtnStyle = (active: boolean, disabled = false): React.CSSProperties => ({
     minWidth: "38px",
@@ -145,8 +151,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onNavigate
           : Promise.resolve([]),
       ]);
 
+      let results = dash.candidate_results || [];
+      if (
+        dignity === "concejal_urbano" &&
+        isRiobamba(selectedCanton) &&
+        results.some((c: any) => !c.parroquia)
+      ) {
+        try {
+          const catalog = await api.getCandidates("concejal_urbano", selectedCanton);
+          const parrById = new Map(catalog.map(c => [c.id, c.parroquia]));
+          results = results.map((c: any) => ({
+            ...c,
+            parroquia: c.parroquia || parrById.get(c.id),
+          }));
+        } catch {
+          // Si falla el catálogo, se mantiene la lista sin enriquecer
+        }
+      }
+
       setSummary(dash.summary);
-      setCandidateResults(dash.candidate_results);
+      setCandidateResults(results);
       setGeoBreakdown(bd);
 
       if (typeof dash.summary?.novelty_actas_count === "number") {
@@ -515,182 +539,263 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onNavigate
           </div>
 
           {/* MAIN RESULTS GRID */}
-          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "1.5rem", alignItems: "start" }}>
+          {(() => {
+            const isRiobambaUrban = dignity === "concejal_urbano" && isRiobamba(selectedCanton);
+            const selectedCirc = isRiobambaUrban
+              ? getRecintoCircunscripcion(selectedCanton, selectedParroquia)
+              : null;
 
-            {/* CANDIDATE VOTE DETAIL */}
-            <div className="glass-card">
-              <h3 style={{ fontSize: "1.25rem", fontWeight: "700", marginBottom: "1.5rem", borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: "0.75rem" }}>
-                Resultados de Candidatos (Votos Válidos)
-              </h3>
+            const buildCircList = (circ: CircunscripcionNumber) => {
+              const list = candidateResults.filter(
+                (c: any) => getCandidateCircunscripcion(c.parroquia) === circ
+              );
+              const totalVotes = list.reduce((sum: number, c: any) => sum + (c.votes || 0), 0);
+              return list.map((c: any) => ({
+                ...c,
+                percentage_valid:
+                  totalVotes > 0 ? Number((((c.votes || 0) / totalVotes) * 100).toFixed(2)) : 0,
+              }));
+            };
 
-              {candidateResults.length === 0 ? (
-                <p style={{ color: "var(--neutral-300)", textAlign: "center", padding: "2rem" }}>
-                  Aún no hay actas validadas registradas para esta consulta.
-                </p>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+            const renderCandidateCard = (
+              sectionKey: string,
+              title: string,
+              subtitle: string | null,
+              items: any[],
+              activePage: number,
+              onPageChange: (next: number) => void
+            ) => {
+              const sectionTotalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+              const sectionCurrentPage = Math.min(activePage, sectionTotalPages);
+              const sectionPageStart = (sectionCurrentPage - 1) * PAGE_SIZE;
+              const sectionPaged = items.slice(sectionPageStart, sectionPageStart + PAGE_SIZE);
+              const sectionMaxVotes = Math.max(0, ...items.map((c: any) => c.votes || 0)) || 1;
+              const sectionPageNumbers = buildPageNumbers(sectionCurrentPage, sectionTotalPages);
+              const winnerGradId = `winnerGradient-${sectionKey}`;
+              const standardGradId = `standardGradient-${sectionKey}`;
 
-                  {/* CHART SVG DINÁMICO */}
-                  <div style={{ backgroundColor: "rgba(15,23,42,0.4)", borderRadius: "var(--radius-md)", padding: "1.5rem 1rem" }}>
-                    <svg key={`chart-${currentPage}`} viewBox={`0 0 500 ${Math.max(120, pagedCandidates.length * 50)}`} width="100%">
-                      {pagedCandidates.map((cand, i) => {
-                        const index = pageStart + i; // posición real en el ranking
-                        const yPosition = i * 50 + 20;
-                        const barWidth = (cand.votes / maxVotesAll) * 320;
-
-                        return (
-                          <g key={cand.id} style={{ animation: `fadeIn 0.5s ${i * 0.08}s ease forwards`, opacity: 0 }}>
-                            {/* Número de Lista */}
-                            <rect x="0" y={yPosition - 12} width="35" height="18" rx="4" fill="rgba(59,130,246,0.15)" stroke="rgba(59,130,246,0.3)" strokeWidth="0.5" />
-                            <text x="17.5" y={yPosition + 1} fill="var(--primary)" fontSize="9" fontWeight="700" textAnchor="middle">
-                              L.{cand.list_number}
-                            </text>
-
-                            {/* Nombre del Candidato */}
-                            <text x="45" y={yPosition - 2} fill="#fff" fontSize="10.5" fontWeight="600">
-                              {cand.name}
-                            </text>
-
-                            {/* Barra de Fondo */}
-                            <rect x="45" y={yPosition + 4} width="320" height="8" rx="4" fill="rgba(255,255,255,0.05)" />
-
-                            {/* Barra de Votos */}
-                            <rect
-                              x="45"
-                              y={yPosition + 4}
-                              width={Math.max(5, barWidth)}
-                              height="8"
-                              rx="4"
-                              fill={index === 0 ? "url(#winnerGradient)" : "url(#standardGradient)"}
-                            />
-
-                            {/* Porcentaje */}
-                            <text x="375" y={yPosition + 12} fill="#fff" fontSize="12" fontWeight="800">
-                              {cand.percentage_valid}%
-                            </text>
-
-                            {/* Votos absolutos */}
-                            <text x="430" y={yPosition + 12} fill="var(--neutral-300)" fontSize="10" fontWeight="500">
-                              {cand.votes.toLocaleString()} v.
-                            </text>
-                          </g>
-                        );
-                      })}
-                      {/* Degradados para el gráfico */}
-                      <defs>
-                        <linearGradient id="winnerGradient" x1="0" y1="0" x2="1" y2="0">
-                          <stop offset="0%" stopColor="#10b981" />
-                          <stop offset="100%" stopColor="#059669" />
-                        </linearGradient>
-                        <linearGradient id="standardGradient" x1="0" y1="0" x2="1" y2="0">
-                          <stop offset="0%" stopColor="#3b82f6" />
-                          <stop offset="100%" stopColor="#1d4ed8" />
-                        </linearGradient>
-                      </defs>
-                    </svg>
+              return (
+                <div key={sectionKey} className="glass-card">
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "baseline",
+                      flexWrap: "wrap",
+                      gap: "0.5rem",
+                      marginBottom: "1.5rem",
+                      borderBottom: "1px solid rgba(255,255,255,0.08)",
+                      paddingBottom: "0.75rem",
+                    }}
+                  >
+                    <h3 style={{ fontSize: "1.25rem", fontWeight: "700", margin: 0 }}>{title}</h3>
+                    {subtitle && (
+                      <span style={{ fontSize: "0.8rem", color: "var(--neutral-300)" }}>
+                        {subtitle}
+                      </span>
+                    )}
                   </div>
 
-                  {/* TABLA DE RESULTADOS */}
-                  <table className="custom-table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Lista</th>
-                        <th>Candidato / Partido</th>
-                        <th style={{ textAlign: "right" }}>Votos</th>
-                        <th style={{ textAlign: "right" }}>% Válidos</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pagedCandidates.map((cand, i) => {
-                        const idx = pageStart + i; // posición real en el ranking
-                        return (
-                        <tr key={cand.id}>
-                          <td style={{ color: "var(--neutral-300)", fontWeight: 700 }}>{idx + 1}</td>
-                          <td>
-                            <span
-                              style={{
-                                backgroundColor: idx === 0 ? "rgba(16, 185, 129, 0.15)" : "rgba(255,255,255,0.05)",
-                                border: `1px solid ${idx === 0 ? "var(--success)" : "rgba(255,255,255,0.1)"}`,
-                                color: idx === 0 ? "var(--success)" : "var(--neutral-50)",
-                                padding: "0.2rem 0.5rem",
-                                borderRadius: "4px",
-                                fontSize: "0.75rem",
-                                fontWeight: "700"
-                              }}
-                            >
-                              Lista {cand.list_number}
-                            </span>
-                          </td>
-                          <td>
-                            <div style={{ fontWeight: "600" }}>{cand.name}</div>
-                            <div style={{ fontSize: "0.75rem", color: "var(--neutral-300)" }}>{cand.party_name}</div>
-                          </td>
-                          <td style={{ textAlign: "right", fontWeight: "700" }}>
-                            {cand.votes.toLocaleString()}
-                          </td>
-                          <td style={{ textAlign: "right", fontWeight: "800", color: idx === 0 ? "var(--success)" : "#fff" }}>
-                            {cand.percentage_valid}%
-                          </td>
-                        </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                  {items.length === 0 ? (
+                    <p style={{ color: "var(--neutral-300)", textAlign: "center", padding: "2rem" }}>
+                      Aún no hay actas validadas registradas para esta consulta.
+                    </p>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
 
-                  {/* PAGINACIÓN */}
-                  {totalPages > 1 && (
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        flexWrap: "wrap",
-                        gap: "0.75rem",
-                        paddingTop: "1rem",
-                        borderTop: "1px solid rgba(255,255,255,0.08)"
-                      }}
-                    >
-                      <span style={{ fontSize: "0.85rem", color: "var(--neutral-300)" }}>
-                        Mostrando {pageStart + 1}–{pageStart + pagedCandidates.length} de {candidateResults.length} candidatos
-                      </span>
-                      <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                        <button
-                          type="button"
-                          style={pageBtnStyle(false, currentPage === 1)}
-                          disabled={currentPage === 1}
-                          onClick={() => setPage(currentPage - 1)}
-                        >
-                          ‹ Anterior
-                        </button>
-                        {pageNumbers.map((p, i) =>
-                          p === "…" ? (
-                            <span key={`dots-${i}`} style={{ color: "var(--neutral-300)", padding: "0.45rem 0.25rem" }}>…</span>
-                          ) : (
-                            <button
-                              key={p}
-                              type="button"
-                              style={pageBtnStyle(p === currentPage)}
-                              onClick={() => setPage(p)}
-                            >
-                              {p}
-                            </button>
-                          )
-                        )}
-                        <button
-                          type="button"
-                          style={pageBtnStyle(false, currentPage === totalPages)}
-                          disabled={currentPage === totalPages}
-                          onClick={() => setPage(currentPage + 1)}
-                        >
-                          Siguiente ›
-                        </button>
+                      {/* CHART SVG DINÁMICO */}
+                      <div style={{ backgroundColor: "rgba(15,23,42,0.4)", borderRadius: "var(--radius-md)", padding: "1.5rem 1rem" }}>
+                        <svg key={`chart-${sectionKey}-${sectionCurrentPage}`} viewBox={`0 0 500 ${Math.max(120, sectionPaged.length * 50)}`} width="100%">
+                          {sectionPaged.map((cand, i) => {
+                            const index = sectionPageStart + i; // posición real en el ranking
+                            const yPosition = i * 50 + 20;
+                            const barWidth = (cand.votes / sectionMaxVotes) * 320;
+
+                            return (
+                              <g key={cand.id} style={{ animation: `fadeIn 0.5s ${i * 0.08}s ease forwards`, opacity: 0 }}>
+                                {/* Número de Lista */}
+                                <rect x="0" y={yPosition - 12} width="35" height="18" rx="4" fill="rgba(59,130,246,0.15)" stroke="rgba(59,130,246,0.3)" strokeWidth="0.5" />
+                                <text x="17.5" y={yPosition + 1} fill="var(--primary)" fontSize="9" fontWeight="700" textAnchor="middle">
+                                  L.{cand.list_number}
+                                </text>
+
+                                {/* Nombre del Candidato */}
+                                <text x="45" y={yPosition - 2} fill="#fff" fontSize="10.5" fontWeight="600">
+                                  {cand.name}
+                                </text>
+
+                                {/* Barra de Fondo */}
+                                <rect x="45" y={yPosition + 4} width="320" height="8" rx="4" fill="rgba(255,255,255,0.05)" />
+
+                                {/* Barra de Votos */}
+                                <rect
+                                  x="45"
+                                  y={yPosition + 4}
+                                  width={Math.max(5, barWidth)}
+                                  height="8"
+                                  rx="4"
+                                  fill={index === 0 ? `url(#${winnerGradId})` : `url(#${standardGradId})`}
+                                />
+
+                                {/* Porcentaje */}
+                                <text x="375" y={yPosition + 12} fill="#fff" fontSize="12" fontWeight="800">
+                                  {cand.percentage_valid}%
+                                </text>
+
+                                {/* Votos absolutos */}
+                                <text x="430" y={yPosition + 12} fill="var(--neutral-300)" fontSize="10" fontWeight="500">
+                                  {cand.votes.toLocaleString()} v.
+                                </text>
+                              </g>
+                            );
+                          })}
+                          {/* Degradados para el gráfico */}
+                          <defs>
+                            <linearGradient id={winnerGradId} x1="0" y1="0" x2="1" y2="0">
+                              <stop offset="0%" stopColor="#10b981" />
+                              <stop offset="100%" stopColor="#059669" />
+                            </linearGradient>
+                            <linearGradient id={standardGradId} x1="0" y1="0" x2="1" y2="0">
+                              <stop offset="0%" stopColor="#3b82f6" />
+                              <stop offset="100%" stopColor="#1d4ed8" />
+                            </linearGradient>
+                          </defs>
+                        </svg>
                       </div>
+
+                      {/* TABLA DE RESULTADOS */}
+                      <table className="custom-table">
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Lista</th>
+                            <th>Candidato / Partido</th>
+                            <th style={{ textAlign: "right" }}>Votos</th>
+                            <th style={{ textAlign: "right" }}>% Válidos</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sectionPaged.map((cand, i) => {
+                            const idx = sectionPageStart + i; // posición real en el ranking
+                            return (
+                            <tr key={cand.id}>
+                              <td style={{ color: "var(--neutral-300)", fontWeight: 700 }}>{idx + 1}</td>
+                              <td>
+                                <span
+                                  style={{
+                                    backgroundColor: idx === 0 ? "rgba(16, 185, 129, 0.15)" : "rgba(255,255,255,0.05)",
+                                    border: `1px solid ${idx === 0 ? "var(--success)" : "rgba(255,255,255,0.1)"}`,
+                                    color: idx === 0 ? "var(--success)" : "var(--neutral-50)",
+                                    padding: "0.2rem 0.5rem",
+                                    borderRadius: "4px",
+                                    fontSize: "0.75rem",
+                                    fontWeight: "700"
+                                  }}
+                                >
+                                  Lista {cand.list_number}
+                                </span>
+                              </td>
+                              <td>
+                                <div style={{ fontWeight: "600" }}>{cand.name}</div>
+                                <div style={{ fontSize: "0.75rem", color: "var(--neutral-300)" }}>{cand.party_name}</div>
+                              </td>
+                              <td style={{ textAlign: "right", fontWeight: "700" }}>
+                                {cand.votes.toLocaleString()}
+                              </td>
+                              <td style={{ textAlign: "right", fontWeight: "800", color: idx === 0 ? "var(--success)" : "#fff" }}>
+                                {cand.percentage_valid}%
+                              </td>
+                            </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+
+                      {/* PAGINACIÓN */}
+                      {sectionTotalPages > 1 && (
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            gap: "0.75rem",
+                            paddingTop: "1rem",
+                            borderTop: "1px solid rgba(255,255,255,0.08)"
+                          }}
+                        >
+                          <span style={{ fontSize: "0.85rem", color: "var(--neutral-300)" }}>
+                            Mostrando {sectionPageStart + 1}–{sectionPageStart + sectionPaged.length} de {items.length} candidatos
+                          </span>
+                          <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              style={pageBtnStyle(false, sectionCurrentPage === 1)}
+                              disabled={sectionCurrentPage === 1}
+                              onClick={() => onPageChange(sectionCurrentPage - 1)}
+                            >
+                              ‹ Anterior
+                            </button>
+                            {sectionPageNumbers.map((p, i) =>
+                              p === "…" ? (
+                                <span key={`dots-${i}`} style={{ color: "var(--neutral-300)", padding: "0.45rem 0.25rem" }}>…</span>
+                              ) : (
+                                <button
+                                  key={p}
+                                  type="button"
+                                  style={pageBtnStyle(p === sectionCurrentPage)}
+                                  onClick={() => onPageChange(p)}
+                                >
+                                  {p}
+                                </button>
+                              )
+                            )}
+                            <button
+                              type="button"
+                              style={pageBtnStyle(false, sectionCurrentPage === sectionTotalPages)}
+                              disabled={sectionCurrentPage === sectionTotalPages}
+                              onClick={() => onPageChange(sectionCurrentPage + 1)}
+                            >
+                              Siguiente ›
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
-            </div>
+              );
+            };
+
+            const circsToShow: CircunscripcionNumber[] = selectedCirc ? [selectedCirc] : [1, 2];
+
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "1.5rem", alignItems: "start" }}>
+
+                {/* CANDIDATE VOTE DETAIL */}
+                {isRiobambaUrban ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+                    {circsToShow.map((circ) =>
+                      renderCandidateCard(
+                        `circ-${circ}`,
+                        `Concejales Urbanos — ${CIRCUNSCRIPCION_INFO[circ].title}`,
+                        `Parroquias: ${CIRCUNSCRIPCION_INFO[circ].parroquiasLabel}`,
+                        buildCircList(circ),
+                        circ === 1 ? pageCirc1 : pageCirc2,
+                        circ === 1 ? setPageCirc1 : setPageCirc2
+                      )
+                    )}
+                  </div>
+                ) : (
+                  renderCandidateCard(
+                    "general",
+                    "Resultados de Candidatos (Votos Válidos)",
+                    null,
+                    candidateResults,
+                    page,
+                    setPage
+                  )
+                )}
 
             {/* GEOGRAPHICAL BREAKDOWN PARISHES */}
             <div className="glass-card">
@@ -760,6 +865,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onNavigate
             </div>
 
           </div>
+            );
+          })()}
 
         </main>
       </div>

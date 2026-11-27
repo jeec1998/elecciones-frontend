@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import { api, type Candidate, type Recinto } from "../services/api";
-
-// Compara textos sin importar mayúsculas ni tildes ("Riobamba" == "RIOBAMBA", "Alausí" == "ALAUSI")
-const norm = (s?: string) =>
-  (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
+import {
+  getCandidateCircunscripcion,
+  getRecintoCircunscripcion,
+  isRiobamba,
+  normalizeGeo as norm,
+} from "../utils/circunscripcion";
 
 interface RegisterVotosProps {
   user: {
@@ -40,6 +42,8 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
   const [whiteVotes, setWhiteVotes] = useState<number>(0);
   const [nullVotes, setNullVotes] = useState<number>(0);
   const [totalVoters, setTotalVoters] = useState<number>(0);
+  const [hasNovedad, setHasNovedad] = useState<boolean>(false);
+  const [novedadComment, setNovedadComment] = useState<string>("");
 
   // Foto y carga - Acta Pública
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
@@ -157,12 +161,17 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
   };
 
   // Cargar candidatos cuando cambia la geografía o la dignidad
+  const activeCircunscripcion =
+    dignity === "concejal_urbano"
+      ? getRecintoCircunscripcion(selectedCanton, selectedParroquia)
+      : null;
+
   useEffect(() => {
     const fetchCandidates = async () => {
       if (!dignity) return;
       try {
         // Prefectos: solo provincia (sin cantón ni parroquia)
-        // Alcalde, concejales: solo cantón
+        // Alcalde, concejales: solo cantón (en Riobamba concejales urbanos se filtran por circunscripción 1/2)
         // Vocal junta parroquial: cantón y parroquia
         const canton =
           dignity === "prefecto" ? undefined : selectedCanton || undefined;
@@ -171,6 +180,12 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
 
         // Si se necesita cantón y aún no está cargado, esperar
         if (dignity !== "prefecto" && !canton) {
+          setCandidates([]);
+          return;
+        }
+
+        const isRiobambaUrban = dignity === "concejal_urbano" && isRiobamba(canton);
+        if (isRiobambaUrban && !selectedParroquia) {
           setCandidates([]);
           return;
         }
@@ -186,6 +201,12 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
             (!parroquia || norm(c.parroquia) === norm(parroquia))
           );
         }
+
+        if (isRiobambaUrban) {
+          const circ = getRecintoCircunscripcion(canton, selectedParroquia);
+          cands = circ ? cands.filter(c => getCandidateCircunscripcion(c.parroquia) === circ) : [];
+        }
+
         setCandidates(cands);
 
         const initialVotes: Record<string, number> = {};
@@ -338,15 +359,19 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
     if (compressedBlobs.length === 0) return setMessage({ type: "error", text: "Debe capturar al menos una foto del acta pública oficial" });
     if (personalCompressedBlobs.length === 0) return setMessage({ type: "error", text: "Debe capturar al menos una foto de su copia personal" });
 
-    if (!isMathCorrect()) {
-      if (!window.confirm("¡Alerta! La suma de los votos no coincide con el total de sufragantes en el padrón. ¿Desea ingresar el acta con esta novedad?")) {
+    if (hasNovedad && !novedadComment.trim()) {
+      return setMessage({ type: "error", text: "Ingrese la nota describiendo la novedad del acta" });
+    }
+
+    if (!isMathCorrect() && !hasNovedad) {
+      if (!window.confirm("¡Alerta! La suma de los votos no coincide con el total de sufragantes en el padrón. ¿Desea enviar el acta de todas formas?")) {
         return;
       }
     }
 
     isSubmittingRef.current = true;
     setLoading(true);
-    const attemptKey = `${selectedRecintoId}:${mesaNumber}:${gender}:${dignity}:${compressedBlobs.length}:${personalCompressedBlobs.length}`;
+    const attemptKey = `${selectedRecintoId}:${mesaNumber}:${gender}:${dignity}:${compressedBlobs.length}:${personalCompressedBlobs.length}:${hasNovedad}:${novedadComment.trim()}`;
 
     try {
       let actaId =
@@ -364,7 +389,9 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
           votes,
           white_votes: whiteVotes,
           null_votes: nullVotes,
-          total_voters: totalVoters
+          total_voters: totalVoters,
+          has_novedad: hasNovedad,
+          novedad_comment: hasNovedad ? novedadComment.trim() : undefined,
         });
         actaId = registeredActa.id;
         pendingUploadRef.current = {
@@ -406,6 +433,8 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
       setWhiteVotes(0);
       setNullVotes(0);
       setTotalVoters(0);
+      setHasNovedad(false);
+      setNovedadComment("");
       photoPreviews.forEach(url => URL.revokeObjectURL(url));
       personalPhotoPreviews.forEach(url => URL.revokeObjectURL(url));
       setPhotoPreviews([]);
@@ -625,9 +654,25 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
 
           {/* VOTOS CANDIDATOS */}
           <div className="mobile-card">
-            <h3 style={{ fontSize: "1rem", marginBottom: "1rem", color: "#1e3a8a", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.5rem" }}>
-              2. Votos por Lista / Candidato
-            </h3>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", marginBottom: "1rem", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.5rem" }}>
+              <h3 style={{ fontSize: "1rem", margin: 0, color: "#1e3a8a" }}>
+                2. Votos por Lista / Candidato
+              </h3>
+              {activeCircunscripcion && (
+                <span
+                  style={{
+                    fontSize: "0.75rem",
+                    fontWeight: "700",
+                    color: "#1e3a8a",
+                    backgroundColor: "#dbeafe",
+                    padding: "0.2rem 0.55rem",
+                    borderRadius: "9999px",
+                  }}
+                >
+                  Circunscripción {activeCircunscripcion}
+                </span>
+              )}
+            </div>
 
             {candidates.length === 0 ? (
               <p style={{ fontSize: "0.9rem", color: "var(--neutral-700)", textAlign: "center", padding: "1rem" }}>
@@ -751,6 +796,55 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
               <span>
                 {isMathCorrect() ? "✓ CUADRA" : `✗ NO CUADRA (Dif: ${currentSum - totalVoters})`}
               </span>
+            </div>
+
+            {/* Check para nota con novedad */}
+            <div
+              style={{
+                marginTop: "1rem",
+                padding: "0.75rem 1rem",
+                borderRadius: "var(--radius-md)",
+                border: `1px solid ${hasNovedad ? "rgba(244, 63, 94, 0.45)" : "#e2e8f0"}`,
+                backgroundColor: hasNovedad ? "rgba(244, 63, 94, 0.06)" : "#f8fafc",
+              }}
+            >
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.6rem",
+                  cursor: "pointer",
+                  fontSize: "0.9rem",
+                  fontWeight: "600",
+                  color: hasNovedad ? "#be123c" : "#334155",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={hasNovedad}
+                  onChange={(e) => setHasNovedad(e.target.checked)}
+                  style={{ width: "18px", height: "18px", accentColor: "#e11d48", cursor: "pointer" }}
+                />
+                <span>Nota con novedad</span>
+              </label>
+
+              {hasNovedad && (
+                <div style={{ marginTop: "0.75rem" }}>
+                  <textarea
+                    className="input-field"
+                    rows={3}
+                    placeholder="Escriba la nota de la novedad (ej. no cuadra el padrón, acta manchada, número ilegible)..."
+                    value={novedadComment}
+                    onChange={(e) => setNovedadComment(e.target.value)}
+                    style={{
+                      resize: "vertical",
+                      fontSize: "0.85rem",
+                      borderColor: "rgba(244, 63, 94, 0.4)",
+                      backgroundColor: "#ffffff",
+                    }}
+                  />
+                </div>
+              )}
             </div>
           </div>
 

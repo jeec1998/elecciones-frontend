@@ -704,17 +704,22 @@ export const api = {
     white_votes: number;
     null_votes: number;
     total_voters: number;
+    has_novedad?: boolean;
+    novedad_comment?: string;
   }): Promise<Acta> {
     if (isOffline()) {
       initOfflineDB();
       const actas = getLocalActas();
       const id = `${data.recinto_id}:${data.mesa_number}:${data.gender}:${data.dignity}`;
       const nowStr = new Date().toISOString();
+      const trimmedComment = data.novedad_comment?.trim() || undefined;
+      const hasNovedad = Boolean(data.has_novedad || trimmedComment);
 
       const newActa: Acta = {
         id,
         ...data,
-        status: "En Verificación",
+        novedad_comment: trimmedComment,
+        status: hasNovedad ? "Con Novedad" : "En Verificación",
         entered_by: localStorage.getItem("username") || "digitador1",
         created_at: nowStr,
         updated_at: nowStr,
@@ -974,6 +979,7 @@ export const api = {
           name: cand.name,
           list_number: cand.list_number,
           party_name: cand.party_name,
+          parroquia: cand.parroquia,
           photo_url: cand.photo_url,
           votes,
           percentage_valid: Number(pct_valid.toFixed(2)),

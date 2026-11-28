@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { api, resolvePhotoUrl, type Recinto } from "../services/api";
+import {
+  CIRCUNSCRIPCION_INFO,
+  getCandidateCircunscripcion,
+  getRecintoCircunscripcion,
+  isRiobamba,
+  type CircunscripcionNumber,
+} from "../utils/circunscripcion";
 
 interface TvDashboardProps {
   onExit: () => void;
@@ -75,6 +82,7 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
   const [dignityId, setDignityId] = useState<string>("general");
   const [canton, setCanton] = useState<string>("");     // "" = Todos
   const [parroquia, setParroquia] = useState<string>(""); // "" = Todas
+  const [circunscripcion, setCircunscripcion] = useState<"" | "1" | "2">("");
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
 
   // Datos vista detallada
@@ -162,8 +170,25 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
         canton || undefined,
         parroquia || undefined
       );
+      let results = detail.candidate_results || [];
+      if (
+        dignity.id === "concejal_urbano" &&
+        isRiobamba(canton) &&
+        results.some((c: any) => !c.parroquia)
+      ) {
+        try {
+          const catalog = await api.getCandidates("concejal_urbano", canton);
+          const parrById = new Map(catalog.map(c => [c.id, c.parroquia]));
+          results = results.map((c: any) => ({
+            ...c,
+            parroquia: c.parroquia || parrById.get(c.id),
+          }));
+        } catch {
+          // Si falla el catálogo, se mantiene la lista sin enriquecer
+        }
+      }
       setSummary(detail.summary || EMPTY_SUMMARY);
-      setApiCandidates(detail.candidate_results || []);
+      setApiCandidates(results);
       if (Array.isArray(detail.zones)) {
         setServerZones(detail.zones);
         setActas([]);
@@ -323,6 +348,7 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
     if (c !== undefined) setCanton(c);
     if (id === "prefecto" && c === undefined) setCanton("");
     setParroquia("");
+    setCircunscripcion("");
     setSelectedCandidateId(null);
   };
 
@@ -408,10 +434,69 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
   );
 
   const renderDetailedView = () => {
-    const selectedCandidate = candidateResults.find(c => c.id === selectedCandidateId);
+    const isRiobambaUrban = dignity.id === "concejal_urbano" && isRiobamba(canton);
+    const activeCirc: CircunscripcionNumber | null = isRiobambaUrban
+      ? circunscripcion === "1"
+        ? 1
+        : circunscripcion === "2"
+          ? 2
+          : getRecintoCircunscripcion(canton, parroquia)
+      : null;
+
+    const buildCircList = (circ: CircunscripcionNumber) => {
+      const list = candidateResults.filter(
+        (c: any) => getCandidateCircunscripcion(c.parroquia) === circ
+      );
+      const totalVotes = list.reduce((sum: number, c: any) => sum + (c.votes || 0), 0);
+      return list.map((c: any) => ({
+        ...c,
+        percentage_valid: totalVotes > 0 ? round2(((c.votes || 0) / totalVotes) * 100) : 0,
+      }));
+    };
+
+    const visibleCandidates =
+      isRiobambaUrban && activeCirc !== null ? buildCircList(activeCirc) : candidateResults;
+
+    const visibleZones =
+      isRiobambaUrban && activeCirc !== null && !parroquia
+        ? zoneBreakdown.filter(z => getRecintoCircunscripcion(canton, z.location) === activeCirc)
+        : zoneBreakdown;
+
+    const selectedCandidate = visibleCandidates.find(c => c.id === selectedCandidateId);
     const s = viewSummary;
-    const zona = parroquia ? `${canton} › ${parroquia}` : canton ? `Cantón ${canton}` : "Provincia de Chimborazo";
-    const zoneTotal = zoneBreakdown.reduce((acc, z) => acc + z.votes, 0);
+    const circLabel = activeCirc ? ` › ${CIRCUNSCRIPCION_INFO[activeCirc].title}` : "";
+    const zona = parroquia
+      ? `${canton} › ${parroquia}`
+      : canton
+        ? `Cantón ${canton}${circLabel}`
+        : "Provincia de Chimborazo";
+    const zoneTotal = visibleZones.reduce((acc, z) => acc + z.votes, 0);
+
+    const renderCandidateRow = (cand: any, index: number) => {
+      const active = selectedCandidateId === cand.id;
+      return (
+        <div key={cand.id} className={`cand-row ${active ? "active" : ""}`}
+          onClick={() => setSelectedCandidateId(active ? null : cand.id)}>
+          <div className={`rank ${index === 0 && cand.votes > 0 ? "first" : ""}`}>{index + 1}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "1rem", marginBottom: 6 }}>
+              <div className="ellipsis">
+                <span className="badge-list">L. {cand.list_number}</span>
+                <strong style={{ fontSize: "1.2rem" }}>{cand.name}</strong>
+                <span style={{ fontSize: "0.8rem", color: "#64748b", marginLeft: 8 }}>{cand.party_name}</span>
+              </div>
+              <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                <strong style={{ fontSize: "1.35rem", color: index === 0 ? "#10b981" : "#00f0ff" }}>{cand.percentage_valid}%</strong>
+                <div style={{ fontSize: "0.75rem", color: "#64748b" }}>{(cand.votes || 0).toLocaleString()} votos</div>
+              </div>
+            </div>
+            <div className="progress-bar-container" style={{ height: 16 }}>
+              <div className="progress-bar-fill" style={{ width: `${cand.percentage_valid}%`, background: BAR_COLORS[index % BAR_COLORS.length] }} />
+            </div>
+          </div>
+        </div>
+      );
+    };
 
     return (
       <div className="animate-fade-in" style={{ flex: 1, display: "flex", flexDirection: "column", gap: "1.25rem", overflow: "hidden" }}>
@@ -420,6 +505,11 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
           <div>
             <span style={{ fontSize: "0.85rem", color: "#3b82f6", fontWeight: 700, letterSpacing: 1 }}>{zona.toUpperCase()}</span>
             <h2 style={{ fontSize: "2.3rem", fontWeight: 800, marginTop: 4 }}>{dignity.icon} {dignity.label}</h2>
+            {isRiobambaUrban && activeCirc && (
+              <span style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
+                {CIRCUNSCRIPCION_INFO[activeCirc].title}: {CIRCUNSCRIPCION_INFO[activeCirc].parroquiasLabel}
+              </span>
+            )}
             {dignity.scope === "parroquial" && !parroquia && (
               <span style={{ fontSize: "0.8rem", color: "#fbbf24" }}>Seleccione una parroquia para ver su Junta Parroquial</span>
             )}
@@ -440,7 +530,7 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
         </div>
 
         {/* CUERPO */}
-        <div style={{ flex: 1, display: "grid", gridTemplateColumns: candidateResults.length ? "3fr 2fr" : "1fr", gap: "1.25rem", minHeight: 0 }}>
+        <div style={{ flex: 1, display: "grid", gridTemplateColumns: visibleCandidates.length ? "3fr 2fr" : "1fr", gap: "1.25rem", minHeight: 0 }}>
           {/* CANDIDATOS */}
           <div className="tv-card" style={{ gap: "0.75rem", overflowY: "auto" }}>
             <div className="section-head">
@@ -449,47 +539,41 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
             </div>
 
             {error && <div style={{ color: "#f43f5e", textAlign: "center" }}>⚠️ {error}</div>}
-            {loading && candidateResults.length === 0 && (
+            {loading && visibleCandidates.length === 0 && (
               <div style={{ textAlign: "center", color: "#94a3b8", padding: "2rem" }}>
                 <div className="spinner" style={{ margin: "0 auto 1rem" }} /> Cargando candidatos...
               </div>
             )}
-            {!loading && !error && candidateResults.length === 0 && (
+            {!loading && !error && visibleCandidates.length === 0 && (
               <div style={{ textAlign: "center", color: "#64748b", padding: "2rem" }}>
                 <h3>Sin candidatos / actas para esta selección</h3>
                 <p>Esperando transmisión de datos...</p>
               </div>
             )}
 
-            {candidateResults.map((cand, index) => {
-              const active = selectedCandidateId === cand.id;
-              return (
-                <div key={cand.id} className={`cand-row ${active ? "active" : ""}`}
-                  onClick={() => setSelectedCandidateId(active ? null : cand.id)}>
-                  <div className={`rank ${index === 0 && cand.votes > 0 ? "first" : ""}`}>{index + 1}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "1rem", marginBottom: 6 }}>
-                      <div className="ellipsis">
-                        <span className="badge-list">L. {cand.list_number}</span>
-                        <strong style={{ fontSize: "1.2rem" }}>{cand.name}</strong>
-                        <span style={{ fontSize: "0.8rem", color: "#64748b", marginLeft: 8 }}>{cand.party_name}</span>
-                      </div>
-                      <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                        <strong style={{ fontSize: "1.35rem", color: index === 0 ? "#10b981" : "#00f0ff" }}>{cand.percentage_valid}%</strong>
-                        <div style={{ fontSize: "0.75rem", color: "#64748b" }}>{(cand.votes || 0).toLocaleString()} votos</div>
-                      </div>
+            {isRiobambaUrban && activeCirc === null ? (
+              ([1, 2] as CircunscripcionNumber[]).map(circ => {
+                const list = buildCircList(circ);
+                if (list.length === 0) return null;
+                return (
+                  <div key={circ} style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginBottom: "0.75rem" }}>
+                    <div className="section-head" style={{ color: "#60a5fa", marginTop: circ === 2 ? "0.5rem" : 0 }}>
+                      <span>{CIRCUNSCRIPCION_INFO[circ].title.toUpperCase()}</span>
+                      <span style={{ fontSize: "0.72rem", color: "#94a3b8", fontWeight: 500 }}>
+                        {CIRCUNSCRIPCION_INFO[circ].parroquiasLabel}
+                      </span>
                     </div>
-                    <div className="progress-bar-container" style={{ height: 16 }}>
-                      <div className="progress-bar-fill" style={{ width: `${cand.percentage_valid}%`, background: BAR_COLORS[index % BAR_COLORS.length] }} />
-                    </div>
+                    {list.map((cand, idx) => renderCandidateRow(cand, idx))}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            ) : (
+              visibleCandidates.map((cand, index) => renderCandidateRow(cand, index))
+            )}
           </div>
 
           {/* PANEL DERECHO */}
-          {candidateResults.length > 0 && (
+          {visibleCandidates.length > 0 && (
             <div className="tv-card" style={{ minHeight: 0, overflow: "hidden" }}>
               {selectedCandidate ? (
                 <>
@@ -518,16 +602,16 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
                 <>
                   <div className="section-head"><span>DESGLOSE POR {breakdownLevel.toUpperCase()}</span></div>
                   <Donut
-                    items={zoneBreakdown.map(z => ({ key: z.location, pct: zoneTotal ? round2((z.votes / zoneTotal) * 100) : 0 }))}
+                    items={visibleZones.map(z => ({ key: z.location, pct: zoneTotal ? round2((z.votes / zoneTotal) * 100) : 0 }))}
                     center={<><span className="mini">Votos válidos</span><div className="big">{(s.total_valid_votes || 0).toLocaleString()}</div></>} />
                   <div className="legend">
-                    {zoneBreakdown.length === 0 ? (
+                    {visibleZones.length === 0 ? (
                       <p style={{ color: "#64748b", textAlign: "center", padding: "1rem" }}>Sin actas reportadas en esta zona.</p>
-                    ) : zoneBreakdown.map((z, idx) => (
+                    ) : visibleZones.map((z, idx) => (
                       <div key={z.location} className="zone-row"
                         onClick={() => {
                           if (!canton) { setCanton(z.location); }
-                          else if (!parroquia) { setParroquia(z.location); }
+                          else if (!parroquia) { setParroquia(z.location); setCircunscripcion(""); }
                         }}>
                         <div style={{ display: "flex", justifyContent: "space-between" }}>
                           <span style={{ fontWeight: 700 }}><i style={{ background: COLORS[idx % COLORS.length] }} />{z.location}</span>
@@ -636,7 +720,7 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
             <label style={{ fontSize: "0.75rem", color: "#94a3b8" }}>
               Cantón
               <select className="tv-select" value={canton}
-                onChange={e => { setCanton(e.target.value); setParroquia(""); setSelectedCandidateId(null); }}>
+                onChange={e => { setCanton(e.target.value); setParroquia(""); setCircunscripcion(""); setSelectedCandidateId(null); }}>
                 {dignity.scope === "provincial" && <option value="">Todos</option>}
                 {cantones.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
@@ -644,11 +728,26 @@ export const TvDashboard: React.FC<TvDashboardProps> = ({ onExit }) => {
             <label style={{ fontSize: "0.75rem", color: "#94a3b8" }}>
               Parroquia
               <select className="tv-select" value={parroquia} disabled={!canton}
-                onChange={e => { setParroquia(e.target.value); setSelectedCandidateId(null); }}>
+                onChange={e => { setParroquia(e.target.value); setCircunscripcion(""); setSelectedCandidateId(null); }}>
                 <option value="">Todas</option>
                 {parroquias.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </label>
+            {dignity.id === "concejal_urbano" && isRiobamba(canton) && (
+              <label style={{ fontSize: "0.75rem", color: "#94a3b8" }}>
+                Circunscripción
+                <select className="tv-select" value={circunscripcion}
+                  onChange={e => {
+                    setCircunscripcion(e.target.value as "" | "1" | "2");
+                    setParroquia("");
+                    setSelectedCandidateId(null);
+                  }}>
+                  <option value="">Ambas (1 y 2)</option>
+                  <option value="1">Circunscripción 1</option>
+                  <option value="2">Circunscripción 2</option>
+                </select>
+              </label>
+            )}
           </div>
         )}
 

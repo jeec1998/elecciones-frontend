@@ -57,6 +57,8 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
   const isSubmittingRef = useRef(false);
   const pendingUploadRef = useRef<{
     key: string;
@@ -223,7 +225,8 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
 
   // Modificar votos individuales
   const handleVoteChange = (candidateId: string, val: string) => {
-    const parsed = parseInt(val) || 0;
+    const clean = val.replace(/^0+(?=\d)/, "");
+    const parsed = clean === "" ? 0 : Math.max(0, parseInt(clean, 10) || 0);
     setVotes(prev => ({
       ...prev,
       [candidateId]: parsed
@@ -423,13 +426,14 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
       pendingUploadRef.current = null;
       setMessage({ type: "success", text: "Acta registrada y subidas todas las imágenes con éxito." });
 
-      // Limpiar formulario excepto ubicación para agilizar la siguiente mesa
+      // Limpiar todo el formulario (votos, blancos, nulos, padrón, mesa, novedad y fotos) tras el 200
       setMesaNumber("");
-      setVotes(prev => {
-        const reset: Record<string, number> = {};
-        Object.keys(prev).forEach(k => reset[k] = 0);
-        return reset;
+      setGender("Femenina");
+      const resetVotes: Record<string, number> = {};
+      candidates.forEach(c => {
+        resetVotes[c.id] = 0;
       });
+      setVotes(resetVotes);
       setWhiteVotes(0);
       setNullVotes(0);
       setTotalVoters(0);
@@ -441,6 +445,9 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
       setCompressedBlobs([]);
       setPersonalPhotoPreviews([]);
       setPersonalCompressedBlobs([]);
+      formRef.current?.reset();
+      mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err: any) {
       setMessage({
         type: "error",
@@ -491,7 +498,7 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
       </header>
 
       {/* Formulario */}
-      <main style={{ flex: 1, padding: "1rem", overflowY: "auto" }}>
+      <main ref={mainRef} style={{ flex: 1, padding: "1rem", overflowY: "auto" }}>
         {message && (
           <div
             className={`badge ${message.type === "success" ? "badge-success" : "badge-danger"}`}
@@ -511,7 +518,7 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
           </div>
         )}
 
-        <form onSubmit={handleSaveActa}>
+        <form ref={formRef} onSubmit={handleSaveActa}>
           {/* UBICACIÓN */}
           <div className="mobile-card">
             <h3 style={{ fontSize: "1rem", marginBottom: "1rem", color: "#1e3a8a", borderBottom: "1px solid #f1f5f9", paddingBottom: "0.5rem" }}>
@@ -715,8 +722,9 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
                     min="0"
                     pattern="[0-9]*"
                     inputMode="numeric"
+                    placeholder="0"
                     style={{ width: "80px", textAlign: "center", padding: "0.5rem" }}
-                    value={votes[cand.id] ?? 0}
+                    value={(votes[cand.id] ?? 0) === 0 ? "" : votes[cand.id]}
                     onChange={(e) => handleVoteChange(cand.id, e.target.value)}
                   />
                 </div>
@@ -770,9 +778,13 @@ export const RegisterVotos: React.FC<RegisterVotosProps> = ({ user, onLogout }) 
                 className="input-field"
                 type="number"
                 min="0"
+                inputMode="numeric"
                 placeholder="Total firmas en el padrón"
-                value={totalVoters || ""}
-                onChange={(e) => setTotalVoters(Number(e.target.value) || 0)}
+                value={totalVoters === 0 ? "" : totalVoters}
+                onChange={(e) => {
+                  const clean = e.target.value.replace(/^0+(?=\d)/, "");
+                  setTotalVoters(clean === "" ? 0 : Math.max(0, parseInt(clean, 10) || 0));
+                }}
                 style={{ fontSize: "1.1rem", fontWeight: "700", borderColor: "#64748b" }}
               />
             </div>
